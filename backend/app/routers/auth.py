@@ -8,9 +8,18 @@ from sqlmodel import select
 from app.auth.deps import get_current_user
 from app.auth.google import oauth
 from app.auth.jwt import create_access_token
+from app.auth.tokens import create_reset_token, verify_reset_token
 from app.config import settings
 from app.database import get_session
 from app.models import AuthProvider, Role, User
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+)
+from app.services.email import send_email
+from app.services.passwords import hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +38,116 @@ def _assert_domain(email: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Only @{allowed} accounts are permitted",
         )
+
+
+# ── Local account login ───────────────────────────────────────────────────────
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    body: LoginRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TokenResponse:
+    """Authenticate with email + password. Returns a Bearer JWT."""
+    result = await session.execute(
+        select(User).where(User.email == body.email.lower())
+    )
+    user = result.scalar_one_or_none()
+
+    # Single generic message — do not reveal whether the email exists
+    _invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if user is None or user.auth_provider != AuthProvider.local:
+        raise _invalid
+    if not user.hashed_password or not verify_password(body.password, user.hashed_password):
+        raise _invalid
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled — contact your administrator",
+        )
+
+    user.last_login_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    return TokenResponse(
+        access_token=create_access_token(user.id, user.email, user.role.value)
+    )
+
+
+# ── Password reset ────────────────────────────────────────────────────────────
+
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    Send a password-reset email.
+    Always returns 200 regardless of whether the email exists —
+    this prevents user enumeration.
+    """
+    result = await session.execute(
+        select(User).where(User.email == body.email.lower())
+    )
+    user = result.scalar_one_or_none()
+
+    if user and user.auth_provider == AuthProvider.local and user.is_active:
+        token = create_reset_token(user.email)
+        reset_url = f"{settings.app_base_url}/reset-password?token={token}"
+
+        send_email(
+            to=user.email,
+            subject="Reset your SimplyTickets password",
+            html_body=(
+                f"<p>Hi {user.name},</p>"
+                f"<p>Click the link below to reset your SimplyTickets password. "
+                f"This link expires in <strong>1 hour</strong>.</p>"
+                f'<p><a href="{reset_url}">{reset_url}</a></p>'
+                f"<p>If you did not request a password reset, ignore this email.</p>"
+            ),
+            text_body=(
+                f"Hi {user.name},\n\n"
+                f"Reset your SimplyTickets password:\n{reset_url}\n\n"
+                f"This link expires in 1 hour.\n"
+                f"If you did not request this, ignore the email."
+            ),
+        )
+
+    return {"message": "If that email has an account, a reset link has been sent"}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Verify the reset token and update the user's password."""
+    email = verify_reset_token(body.token)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset link is invalid or has expired",
+        )
+
+    result = await session.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active or user.auth_provider != AuthProvider.local:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset link is invalid or has expired",
+        )
+
+    user.hashed_password = hash_password(body.new_password)
+    await session.commit()
+
+    return {"message": "Password updated — you can now log in"}
 
 
 # ── Google OIDC ───────────────────────────────────────────────────────────────
@@ -53,35 +172,25 @@ async def google_callback(
 ) -> RedirectResponse:
     """
     Handle the OAuth callback from Google.
-    - Validates domain restriction
-    - Creates or updates the User row
-    - Issues a JWT
-    - Redirects to the frontend /auth/callback page with ?token=
+    Creates or updates the User row, issues a JWT, redirects to the
+    frontend /auth/callback page with ?token=.
     """
-    # Exchange code → tokens
     try:
         token = await oauth.google.authorize_access_token(request)
     except Exception:
-        return RedirectResponse(
-            url=f"{settings.app_base_url}/login?error=oauth_failed"
-        )
+        return RedirectResponse(url=f"{settings.app_base_url}/login?error=oauth_failed")
 
     userinfo = token.get("userinfo") or {}
     email: str = (userinfo.get("email") or "").strip().lower()
 
     if not email:
-        return RedirectResponse(
-            url=f"{settings.app_base_url}/login?error=no_email"
-        )
+        return RedirectResponse(url=f"{settings.app_base_url}/login?error=no_email")
 
     try:
         _assert_domain(email)
     except HTTPException:
-        return RedirectResponse(
-            url=f"{settings.app_base_url}/login?error=domain_not_allowed"
-        )
+        return RedirectResponse(url=f"{settings.app_base_url}/login?error=domain_not_allowed")
 
-    # Upsert user ──────────────────────────────────────────────────────────────
     result = await session.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     now = datetime.now(timezone.utc)
@@ -100,10 +209,7 @@ async def google_callback(
         session.add(user)
     else:
         if not user.is_active:
-            return RedirectResponse(
-                url=f"{settings.app_base_url}/login?error=account_disabled"
-            )
-        # Refresh profile on every login
+            return RedirectResponse(url=f"{settings.app_base_url}/login?error=account_disabled")
         user.name = userinfo.get("name") or user.name
         user.avatar_url = userinfo.get("picture") or user.avatar_url
         user.google_sub = userinfo.get("sub") or user.google_sub
@@ -113,9 +219,7 @@ async def google_callback(
     await session.refresh(user)
 
     jwt = create_access_token(user.id, user.email, user.role.value)
-    return RedirectResponse(
-        url=f"{settings.app_base_url}/auth/callback?token={jwt}"
-    )
+    return RedirectResponse(url=f"{settings.app_base_url}/auth/callback?token={jwt}")
 
 
 # ── Session endpoints ─────────────────────────────────────────────────────────
@@ -139,7 +243,7 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
 @router.post("/logout")
 async def logout() -> dict:
     """
-    JWT is stateless — the actual token deletion happens on the client.
-    This endpoint exists so the frontend has a consistent API call to make.
+    JWT is stateless — token removal is handled client-side.
+    This endpoint exists for a clean, symmetrical API.
     """
     return {"message": "Logged out"}
