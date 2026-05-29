@@ -1,0 +1,14 @@
+# Production overrides — no bind mounts, restart policies, API not exposed
+services:
+  db:
+    restart: unless-stopped
+    ports: []
+
+  api:
+    restart: unless-stopped
+    ports: []
+
+  frontend:
+    restart: unless-stopped
+    ports:
+      - "80:80"
