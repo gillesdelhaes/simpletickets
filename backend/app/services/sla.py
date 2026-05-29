@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.models import Ticket, TicketHistory
 from app.models.enums import TicketStatus
+from app.services.notifications import notify_sla_breached
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,17 @@ async def _check_sla_breaches() -> None:
 
             await session.commit()
             logger.info("SLA check: %d ticket(s) marked breached", len(breached))
+
+            # Send breach notifications after commit
+            for ticket in breached:
+                await notify_sla_breached(
+                    session=session,
+                    ticket_id=ticket.id,
+                    ticket_display_id=ticket.display_id,
+                    ticket_title=ticket.title,
+                    ticket_priority=ticket.priority.value,
+                    assignee_id=ticket.assignee_id,
+                )
 
         except Exception as exc:
             logger.error("SLA breach-check failed: %s", exc)

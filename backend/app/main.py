@@ -12,6 +12,7 @@ from app.routers import (
     auth,
     categories,
     health,
+    notification_prefs,
     replies,
     search,
     sla,
@@ -66,3 +67,4 @@ app.include_router(replies.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(sla.router, prefix="/api")
+app.include_router(notification_prefs.router, prefix="/api")
