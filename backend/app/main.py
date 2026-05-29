@@ -6,16 +6,29 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth.google import init_oauth
 from app.config import settings
-from app.routers import admin, attachments, auth, categories, health, replies, search, sla_policies, tickets
+from app.routers import (
+    admin,
+    attachments,
+    auth,
+    categories,
+    health,
+    replies,
+    search,
+    sla,
+    sla_policies,
+    tickets,
+)
+from app.services.sla import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     init_oauth()
-    # Scheduler and Slack bot are wired in later chunks
+    start_scheduler()
     yield
-    # Shutdown — clean up resources added in later chunks
+    # Shutdown
+    stop_scheduler()
 
 
 app = FastAPI(
@@ -52,3 +65,4 @@ app.include_router(tickets.router, prefix="/api")
 app.include_router(replies.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
+app.include_router(sla.router, prefix="/api")

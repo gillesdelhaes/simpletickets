@@ -20,6 +20,7 @@ from app.database import get_session
 from app.models import Category, SLAPolicy, Ticket, TicketHistory, User
 from app.models.enums import Priority, Role, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketListResponse, TicketRead, TicketUpdate
+from app.services.sla import apply_sla_status_change
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -381,6 +382,9 @@ async def update_ticket(
                 changes["status"] = (ticket.status.value, body.status.value)
                 old_status = ticket.status
                 ticket.status = body.status
+
+                # SLA pause/resume on pending_user transitions
+                apply_sla_status_change(ticket, body.status)
 
                 # Track resolved_at transitions
                 if body.status in _RESOLVED_STATUSES and old_status not in _RESOLVED_STATUSES:
