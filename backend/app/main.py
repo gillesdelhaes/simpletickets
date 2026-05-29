@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth.google import init_oauth
 from app.config import settings
-from app.routers import admin, attachments, auth, categories, health, replies, sla_policies, tickets
+from app.routers import admin, attachments, auth, categories, health, replies, search, sla_policies, tickets
 
 
 @asynccontextmanager
@@ -51,3 +51,4 @@ app.include_router(sla_policies.router, prefix="/api")
 app.include_router(tickets.router, prefix="/api")
 app.include_router(replies.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
