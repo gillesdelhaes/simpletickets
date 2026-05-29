@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import Splash from './pages/Splash'
+import AuthCallback from './pages/AuthCallback'
 
 // Placeholder — replaced when each chunk is built
 function Placeholder({ name }: { name: string }) {
@@ -21,8 +22,9 @@ export default function App() {
       {/* Splash — active until auth is wired up (Chunk 05) */}
       <Route path="/" element={<Splash />} />
 
-      {/* Auth — Chunk 05 */}
+      {/* Auth — Chunk 05 (login page) / Chunk 03 (callback handler already live) */}
       <Route path="/login" element={<Placeholder name="Login" />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* End user — Chunk 16 */}
       <Route path="/dashboard" element={<Placeholder name="My Tickets" />} />

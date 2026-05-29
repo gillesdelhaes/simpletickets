@@ -2,16 +2,20 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
+from app.auth.google import init_oauth
 from app.config import settings
-from app.routers import health
+from app.routers import auth, health
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialise scheduler, Slack bot, etc. (added in later chunks)
+    # Startup
+    init_oauth()
+    # Scheduler and Slack bot are wired in later chunks
     yield
-    # Shutdown: clean up resources
+    # Shutdown — clean up resources added in later chunks
 
 
 app = FastAPI(
@@ -23,6 +27,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# SessionMiddleware must wrap the app before CORS so that
+# Authlib can read/write the OIDC state cookie in route handlers.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.app_secret_key,
+    same_site="lax",
+    https_only=False,  # set True behind HTTPS in production
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.app_base_url],
@@ -32,3 +44,4 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")

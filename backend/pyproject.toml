@@ -24,6 +24,7 @@ dependencies = [
     "aiofiles>=23.2.0",
     "python-multipart>=0.0.12",
     "pillow>=10.4.0",
+    "itsdangerous>=2.2.0",
 ]
 
 [tool.setuptools.packages.find]
