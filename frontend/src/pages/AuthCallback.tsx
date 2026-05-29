@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
 
 /**
  * Landing page for the Google OIDC redirect.
  * The backend redirects here with ?token=<JWT> after a successful login.
- * We store the token, clean the URL, then send the user where they belong.
+ * We store the token via AuthContext, clean the URL, then send the user home.
  */
 export default function AuthCallback() {
   const navigate = useNavigate()
+  const { login } = useAuth()
   const handled = useRef(false)
 
   useEffect(() => {
@@ -19,7 +21,7 @@ export default function AuthCallback() {
     const error = params.get('error')
 
     if (token) {
-      localStorage.setItem('st_token', token)
+      login(token)
       navigate('/dashboard', { replace: true })
       return
     }
@@ -34,7 +36,7 @@ export default function AuthCallback() {
 
     const msg = (error && messages[error]) ?? 'Authentication failed.'
     navigate(`/login?error=${encodeURIComponent(msg)}`, { replace: true })
-  }, [navigate])
+  }, [navigate, login])
 
   return (
     <div className="min-h-screen bg-neutral-950 flex items-center justify-center">

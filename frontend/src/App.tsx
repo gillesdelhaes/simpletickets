@@ -1,6 +1,11 @@
 import { Routes, Route } from 'react-router-dom'
+import { AuthProvider } from './contexts/AuthContext'
+import ProtectedRoute from './components/ProtectedRoute'
 import Splash from './pages/Splash'
 import AuthCallback from './pages/AuthCallback'
+import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
 
 // Placeholder — replaced when each chunk is built
 function Placeholder({ name }: { name: string }) {
@@ -18,33 +23,42 @@ function Placeholder({ name }: { name: string }) {
 
 export default function App() {
   return (
-    <Routes>
-      {/* Splash — active until auth is wired up (Chunk 05) */}
-      <Route path="/" element={<Splash />} />
+    <AuthProvider>
+      <Routes>
+        {/* Splash — active until auth is wired up */}
+        <Route path="/" element={<Splash />} />
 
-      {/* Auth — Chunk 05 (login page) / Chunk 03 (callback handler already live) */}
-      <Route path="/login" element={<Placeholder name="Login" />} />
-      <Route path="/auth/callback" element={<AuthCallback />} />
+        {/* ── Public auth routes ── */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
-      {/* End user — Chunk 16 */}
-      <Route path="/dashboard" element={<Placeholder name="My Tickets" />} />
-      <Route path="/tickets/new" element={<Placeholder name="New Ticket" />} />
-      <Route path="/tickets/:id" element={<Placeholder name="Ticket Detail" />} />
+        {/* ── Protected: any authenticated user ── */}
+        <Route element={<ProtectedRoute roles={['end_user', 'technician', 'admin']} />}>
+          <Route path="/portal" element={<Placeholder name="My Tickets" />} />
+          <Route path="/tickets/new" element={<Placeholder name="New Ticket" />} />
+          <Route path="/tickets/:id" element={<Placeholder name="Ticket Detail" />} />
+        </Route>
 
-      {/* Technician — Chunks 17 & 18 */}
-      <Route path="/queue" element={<Placeholder name="Ticket Queue" />} />
-      <Route path="/queue/mine" element={<Placeholder name="My Queue" />} />
-      <Route path="/search" element={<Placeholder name="Search" />} />
+        {/* ── Protected: technician + admin ── */}
+        <Route element={<ProtectedRoute roles={['technician', 'admin']} />}>
+          <Route path="/dashboard" element={<Placeholder name="Dashboard" />} />
+          <Route path="/queue" element={<Placeholder name="Ticket Queue" />} />
+          <Route path="/queue/mine" element={<Placeholder name="My Queue" />} />
+          <Route path="/search" element={<Placeholder name="Search" />} />
+          <Route path="/reports" element={<Placeholder name="Reports" />} />
+        </Route>
 
-      {/* Reporting — Chunk 25 */}
-      <Route path="/reports" element={<Placeholder name="Reports" />} />
-
-      {/* Admin — Chunk 19 */}
-      <Route path="/admin/users" element={<Placeholder name="User Management" />} />
-      <Route path="/admin/categories" element={<Placeholder name="Categories" />} />
-      <Route path="/admin/sla" element={<Placeholder name="SLA Policies" />} />
-      <Route path="/admin/settings" element={<Placeholder name="Settings" />} />
-      <Route path="/admin/audit" element={<Placeholder name="Audit Log" />} />
-    </Routes>
+        {/* ── Protected: admin only ── */}
+        <Route element={<ProtectedRoute roles={['admin']} />}>
+          <Route path="/admin/users" element={<Placeholder name="User Management" />} />
+          <Route path="/admin/categories" element={<Placeholder name="Categories" />} />
+          <Route path="/admin/sla" element={<Placeholder name="SLA Policies" />} />
+          <Route path="/admin/settings" element={<Placeholder name="Settings" />} />
+          <Route path="/admin/audit" element={<Placeholder name="Audit Log" />} />
+        </Route>
+      </Routes>
+    </AuthProvider>
   )
 }
