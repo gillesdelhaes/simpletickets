@@ -1,18 +1,8 @@
 """
-Full-text Search — Chunk 10.
+Full-text Search using PostgreSQL FTS (tsvector / websearch_to_tsquery).
 
-Uses PostgreSQL's native FTS (tsvector / websearch_to_tsquery) to rank
-tickets by relevance across three fields:
-  - title          (weight A — highest)
-  - description    (weight B)
-  - reply bodies   (weight C)
-
-websearch_to_tsquery supports natural-language queries:
-  "password reset"   → phrase match
-  password -email    → exclude term
-  password | email   → either term
-
-Access: end-users see only their own tickets; tech/admin see all.
+Ranks tickets by relevance across title (weight A), description (weight B),
+and reply bodies (weight C). Supports AND / OR / phrase / negation syntax.
 """
 from datetime import datetime
 from typing import Optional
@@ -25,7 +15,6 @@ from sqlalchemy.orm import aliased
 from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Category, Ticket, TicketReply, User
-from app.models.enums import Role
 from app.schemas.search import SearchResponse, SearchResultItem
 from app.schemas.ticket import TicketRead
 
@@ -51,7 +40,6 @@ def _build_ticket_read(
         description=ticket.description,
         status=ticket.status,
         priority=ticket.priority,
-        channel=ticket.channel,
         category_id=ticket.category_id,
         category_name=category_name,
         submitter_id=ticket.submitter_id,
@@ -157,9 +145,6 @@ async def search_tickets(
         .outerjoin(Category, Ticket.category_id == Category.id)
         .where(Ticket.id.in_(candidate_ids))
     )
-
-    if current_user.role == Role.end_user:
-        fetch_stmt = fetch_stmt.where(Ticket.submitter_id == current_user.id)
 
     fetch_rows = (await session.execute(fetch_stmt)).all()
 

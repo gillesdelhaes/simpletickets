@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings_manager
 from app.database import AsyncSessionLocal
 from app.models import Category, SLAPolicy, Ticket, TicketReply, User
-from app.models.enums import Channel, Priority, TicketStatus
+from app.models.enums import Priority, TicketStatus
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,6 @@ async def create_ticket_from_slack(
             category_id=category_id,
             submitter_id=submitter_id,
             slack_submitter_name=slack_submitter_name if not submitter_id else None,
-            channel=Channel.slack,
             sla_policy_id=sla_policy_id,
             sla_deadline=sla_deadline,
             slack_channel_id=slack_channel_id,
@@ -110,7 +109,7 @@ async def create_ticket_from_slack(
         await session.refresh(ticket)
 
         logger.info(
-            "Created ticket %s from Slack (submitter_id=%s, channel=%s)",
+            "Created ticket %s from Slack (submitter_id=%s, slack_channel=%s)",
             ticket.display_id,
             submitter_id,
             slack_channel_id,

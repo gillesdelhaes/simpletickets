@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Ticket, User
-from app.models.enums import Role
 from app.services.sla import sla_remaining_seconds, sla_status_label
 
 router = APIRouter(tags=["sla"])
@@ -39,15 +38,9 @@ async def get_sla_status(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> SLAStatus:
-    """
-    Return the live SLA state for a ticket.
-    End-users may only view their own tickets.
-    """
+    """Return the live SLA state for a ticket."""
     ticket = await session.get(Ticket, ticket_id)
     if ticket is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-
-    if current_user.role == Role.end_user and ticket.submitter_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
 
     remaining = sla_remaining_seconds(ticket)

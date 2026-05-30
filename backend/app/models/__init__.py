@@ -3,7 +3,6 @@
 #   2. A single `from app.models import ...` covers all models elsewhere
 from app.models.enums import (  # noqa: F401
     AuthProvider,
-    Channel,
     Priority,
     Role,
     TicketStatus,
@@ -20,7 +19,6 @@ from app.models.app_setting import AppSetting  # noqa: F401
 
 __all__ = [
     "AuthProvider",
-    "Channel",
     "Priority",
     "Role",
     "TicketStatus",

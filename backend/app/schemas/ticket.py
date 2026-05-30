@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-from app.models.enums import Channel, Priority, TicketStatus
+from app.models.enums import Priority, TicketStatus
 
 
 class TicketCreate(BaseModel):
@@ -72,7 +72,6 @@ class TicketRead(BaseModel):
     description: str
     status: TicketStatus
     priority: Priority
-    channel: Channel
 
     category_id: Optional[int]
     category_name: Optional[str]

@@ -1,12 +1,7 @@
 """
-Ticket CRUD — Chunk 07.
+Ticket CRUD.
 
-Access rules:
-  POST   /tickets          any authenticated user
-  GET    /tickets          end_users: own tickets only; tech/admin: all
-  GET    /tickets/{id}     end_users: own ticket only
-  PATCH  /tickets/{id}     end_users: title/description/category on open tickets
-                           technicians/admins: all fields
+Access: all endpoints require technician or admin role.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -18,7 +13,7 @@ from sqlalchemy.orm import aliased
 from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Category, SLAPolicy, Ticket, TicketHistory, User
-from app.models.enums import Priority, Role, TicketStatus
+from app.models.enums import Priority, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketListResponse, TicketRead, TicketUpdate
 from app.services.sla import apply_sla_status_change
 
@@ -27,9 +22,6 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 _RESOLVED_STATUSES = {TicketStatus.resolved, TicketStatus.closed}
-
-# Fields end_users are allowed to edit (only while ticket is still open/in-progress)
-_END_USER_EDITABLE = {"title", "description", "category_id"}
 
 
 def _utcnow() -> datetime:
@@ -97,7 +89,6 @@ async def _fetch_enriched(
                 description=ticket.description,
                 status=ticket.status,
                 priority=ticket.priority,
-                channel=ticket.channel,
                 category_id=ticket.category_id,
                 category_name=cat_name,
                 submitter_id=ticket.submitter_id,
@@ -225,15 +216,8 @@ async def list_tickets(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> TicketListResponse:
-    """
-    List tickets with optional filters.
-    End-users see only their own tickets; technicians/admins see all.
-    """
+    """List tickets with optional filters."""
     where: list = []
-
-    # Role-based scope
-    if current_user.role == Role.end_user:
-        where.append(Ticket.submitter_id == current_user.id)
 
     if status_filter:
         where.append(Ticket.status.in_(status_filter))
@@ -241,7 +225,7 @@ async def list_tickets(
         where.append(Ticket.priority.in_(priority_filter))
     if category_id is not None:
         where.append(Ticket.category_id == category_id)
-    if assignee_id is not None and current_user.role != Role.end_user:
+    if assignee_id is not None:
         where.append(Ticket.assignee_id == assignee_id)
     if q:
         where.append(Ticket.title.ilike(f"%{q}%"))
@@ -264,15 +248,8 @@ async def get_ticket(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> TicketRead:
-    """
-    Get a single ticket by ID.
-    End-users can only view their own tickets.
-    """
-    ticket = await _get_ticket_or_404(session, ticket_id)
-
-    if current_user.role == Role.end_user and ticket.submitter_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-
+    """Get a single ticket by ID."""
+    await _get_ticket_or_404(session, ticket_id)
     items, _ = await _fetch_enriched(session, [Ticket.id == ticket_id])
     return items[0]
 
@@ -287,25 +264,8 @@ async def update_ticket(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> TicketRead:
-    """
-    Update a ticket.
-    - End-users: may only edit title, description, and category
-      while the ticket is not resolved/closed.
-    - Technicians/admins: may update any field.
-    """
+    """Update a ticket. All fields are editable by technicians and admins."""
     ticket = await _get_ticket_or_404(session, ticket_id)
-
-    is_privileged = current_user.role in {Role.technician, Role.admin}
-
-    # End-user access guard
-    if not is_privileged:
-        if ticket.submitter_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-        if ticket.status in _RESOLVED_STATUSES:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Resolved or closed tickets cannot be edited",
-            )
 
     provided = body.model_fields_set  # fields explicitly included in request body
     if not provided:
@@ -319,8 +279,6 @@ async def update_ticket(
 
     # title
     if "title" in provided and body.title is not None:
-        if not is_privileged and "title" not in _END_USER_EDITABLE:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot edit this field")
         if ticket.title != body.title:
             changes["title"] = (ticket.title, body.title)
             ticket.title = body.title
@@ -331,7 +289,7 @@ async def update_ticket(
             changes["description"] = (ticket.description[:120], body.description[:120])
             ticket.description = body.description
 
-    # category_id  (allowed for end_users too)
+    # category_id
     if "category_id" in provided:
         new_cat = body.category_id
         if new_cat is not None:
@@ -348,68 +306,57 @@ async def update_ticket(
             )
             ticket.category_id = new_cat
 
-    # Fields below are restricted to technicians/admins
-    if not is_privileged and provided - _END_USER_EDITABLE:
-        restricted = provided - _END_USER_EDITABLE - {"title", "description", "category_id"}
-        if restricted:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to edit these fields",
+    # priority — recalculate SLA deadline when priority changes
+    if "priority" in provided and body.priority is not None:
+        if ticket.priority != body.priority:
+            changes["priority"] = (ticket.priority.value, body.priority.value)
+            ticket.priority = body.priority
+
+            sla_result = await session.execute(
+                select(SLAPolicy).where(SLAPolicy.priority == body.priority)
             )
-
-    if is_privileged:
-        # priority — recalculate SLA deadline when priority changes
-        if "priority" in provided and body.priority is not None:
-            if ticket.priority != body.priority:
-                changes["priority"] = (ticket.priority.value, body.priority.value)
-                ticket.priority = body.priority
-
-                # Recalculate SLA deadline based on new priority
-                sla_result = await session.execute(
-                    select(SLAPolicy).where(SLAPolicy.priority == body.priority)
+            sla_policy = sla_result.scalar_one_or_none()
+            if sla_policy:
+                ticket.sla_policy_id = sla_policy.id
+                ticket.sla_deadline = ticket.created_at + timedelta(
+                    minutes=sla_policy.resolution_minutes
                 )
-                sla_policy = sla_result.scalar_one_or_none()
-                if sla_policy:
-                    ticket.sla_policy_id = sla_policy.id
-                    ticket.sla_deadline = ticket.created_at + timedelta(
-                        minutes=sla_policy.resolution_minutes
-                    )
-                else:
-                    ticket.sla_policy_id = None
-                    ticket.sla_deadline = None
+            else:
+                ticket.sla_policy_id = None
+                ticket.sla_deadline = None
 
-        # status
-        if "status" in provided and body.status is not None:
-            if ticket.status != body.status:
-                changes["status"] = (ticket.status.value, body.status.value)
-                old_status = ticket.status
-                ticket.status = body.status
+    # status
+    if "status" in provided and body.status is not None:
+        if ticket.status != body.status:
+            changes["status"] = (ticket.status.value, body.status.value)
+            old_status = ticket.status
+            ticket.status = body.status
 
-                # SLA pause/resume on pending_user transitions
-                apply_sla_status_change(ticket, body.status)
+            # SLA pause/resume on pending_user transitions
+            apply_sla_status_change(ticket, body.status)
 
-                # Track resolved_at transitions
-                if body.status in _RESOLVED_STATUSES and old_status not in _RESOLVED_STATUSES:
-                    ticket.resolved_at = now
-                elif body.status not in _RESOLVED_STATUSES and old_status in _RESOLVED_STATUSES:
-                    ticket.resolved_at = None
+            # Track resolved_at transitions
+            if body.status in _RESOLVED_STATUSES and old_status not in _RESOLVED_STATUSES:
+                ticket.resolved_at = now
+            elif body.status not in _RESOLVED_STATUSES and old_status in _RESOLVED_STATUSES:
+                ticket.resolved_at = None
 
-        # assignee_id
-        if "assignee_id" in provided:
-            new_assignee = body.assignee_id
-            if new_assignee is not None:
-                assignee = await session.get(User, new_assignee)
-                if assignee is None or not assignee.is_active:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail="Assignee not found or inactive",
-                    )
-            if ticket.assignee_id != new_assignee:
-                changes["assignee_id"] = (
-                    str(ticket.assignee_id) if ticket.assignee_id else None,
-                    str(new_assignee) if new_assignee else None,
+    # assignee_id
+    if "assignee_id" in provided:
+        new_assignee = body.assignee_id
+        if new_assignee is not None:
+            assignee = await session.get(User, new_assignee)
+            if assignee is None or not assignee.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Assignee not found or inactive",
                 )
-                ticket.assignee_id = new_assignee
+        if ticket.assignee_id != new_assignee:
+            changes["assignee_id"] = (
+                str(ticket.assignee_id) if ticket.assignee_id else None,
+                str(new_assignee) if new_assignee else None,
+            )
+            ticket.assignee_id = new_assignee
 
     if not changes:
         # Nothing actually changed — return current state

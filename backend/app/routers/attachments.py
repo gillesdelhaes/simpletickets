@@ -29,7 +29,6 @@ from app.auth.deps import get_current_user
 from app.config import settings
 from app.database import get_session
 from app.models import Ticket, TicketAttachment, User
-from app.models.enums import Role
 from app.schemas.attachment import AttachmentRead
 
 router = APIRouter(tags=["attachments"])
@@ -79,12 +78,6 @@ async def _get_ticket_or_404(session: AsyncSession, ticket_id: int) -> Ticket:
     return ticket
 
 
-def _assert_ticket_access(ticket: Ticket, user: User) -> None:
-    """Raise 404 if an end-user tries to access another user's ticket."""
-    if user.role == Role.end_user and ticket.submitter_id != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-
-
 # ── POST /tickets/{id}/attachments ────────────────────────────────────────────
 
 
@@ -104,8 +97,7 @@ async def upload_attachment(
     Upload a file attachment to a ticket (or to a specific reply).
     Max size: {max_mb} MB. Allowed types: images, PDF, office docs, plain text.
     """
-    ticket = await _get_ticket_or_404(session, ticket_id)
-    _assert_ticket_access(ticket, current_user)
+    await _get_ticket_or_404(session, ticket_id)
 
     max_bytes = settings.attachment_max_size_mb * 1024 * 1024
 
@@ -185,8 +177,7 @@ async def list_attachments(
     session: AsyncSession = Depends(get_session),
 ) -> list[AttachmentRead]:
     """List all attachments for a ticket."""
-    ticket = await _get_ticket_or_404(session, ticket_id)
-    _assert_ticket_access(ticket, current_user)
+    await _get_ticket_or_404(session, ticket_id)
 
     result = await session.execute(
         select(TicketAttachment)
@@ -245,14 +236,7 @@ async def delete_attachment(
     if attachment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
-    ticket = await _get_ticket_or_404(session, attachment.ticket_id)
-
-    is_privileged = current_user.role in {Role.technician, Role.admin}
-    is_uploader = attachment.reply_id is None  # rough proxy — actual uploader not stored
-
-    # For end-users: can only delete on their own ticket; technician/admin: any
-    if not is_privileged:
-        _assert_ticket_access(ticket, current_user)
+    await _get_ticket_or_404(session, attachment.ticket_id)
 
     # Remove file from disk (best-effort — don't fail the request if missing)
     abs_path = Path(settings.storage_local_path) / attachment.storage_path

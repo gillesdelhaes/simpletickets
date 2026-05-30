@@ -75,7 +75,6 @@ def upgrade() -> None:
         sa.Column("submitter_id", sa.Integer(), nullable=True),
         sa.Column("assignee_id", sa.Integer(), nullable=True),
         sa.Column("slack_submitter_name", sqlmodel.AutoString(), nullable=True),
-        sa.Column("channel", sa.String(), nullable=False),
         sa.Column("sla_policy_id", sa.Integer(), nullable=True),
         sa.Column("sla_deadline", sa.DateTime(), nullable=True),
         sa.Column("sla_breached", sa.Boolean(), nullable=False),

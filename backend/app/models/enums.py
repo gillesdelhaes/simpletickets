@@ -2,7 +2,6 @@ from enum import Enum
 
 
 class Role(str, Enum):
-    end_user = "end_user"
     technician = "technician"
     admin = "admin"
 
@@ -20,11 +19,6 @@ class Priority(str, Enum):
     medium = "medium"
     high = "high"
     critical = "critical"
-
-
-class Channel(str, Enum):
-    web = "web"
-    slack = "slack"
 
 
 class AuthProvider(str, Enum):

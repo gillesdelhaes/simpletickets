@@ -1,12 +1,4 @@
-"""
-Ticket Replies — Chunk 08 (extended in Chunk 21 with Slack two-way sync).
-
-Access rules:
-  GET  /tickets/{id}/replies   end_users: own ticket, public replies only
-                               tech/admin: all replies including internal notes
-  POST /tickets/{id}/replies   end_users: public replies on own open ticket
-                               tech/admin: public or internal, any ticket
-"""
+"""Ticket Replies — list and create replies with Slack two-way sync."""
 import logging
 from datetime import datetime, timezone
 
@@ -18,7 +10,7 @@ from sqlalchemy.orm import aliased
 from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Ticket, TicketHistory, TicketReply, User
-from app.models.enums import Role, TicketStatus
+from app.models.enums import TicketStatus
 from app.schemas.reply import ReplyCreate, ReplyRead
 
 logger = logging.getLogger(__name__)
@@ -62,17 +54,8 @@ async def list_replies(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[ReplyRead]:
-    """
-    List replies for a ticket, ordered oldest-first.
-    End-users see only public replies on their own tickets.
-    Technicians/admins see all replies including internal notes.
-    """
-    ticket = await _get_ticket_or_404(session, ticket_id)
-
-    is_privileged = current_user.role in {Role.technician, Role.admin}
-
-    if not is_privileged and ticket.submitter_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    """List replies for a ticket, ordered oldest-first."""
+    await _get_ticket_or_404(session, ticket_id)
 
     Author = aliased(User, flat=True)
 
@@ -82,9 +65,6 @@ async def list_replies(
         .where(TicketReply.ticket_id == ticket_id)
         .order_by(TicketReply.created_at.asc())
     )
-
-    if not is_privileged:
-        stmt = stmt.where(TicketReply.is_internal == False)  # noqa: E712
 
     rows = (await session.execute(stmt)).all()
 
@@ -107,37 +87,16 @@ async def create_reply(
 ) -> ReplyRead:
     """
     Add a reply to a ticket.
-
-    End-users:
-      - May only reply to their own tickets.
-      - May not post internal notes (is_internal is forced False).
-      - May not reply to resolved or closed tickets.
-
-    Technicians/admins:
-      - May reply to any ticket.
-      - May post internal notes (is_internal=True).
-      - Replying to a resolved ticket re-opens it to in_progress.
+    Replying to a resolved ticket with a public reply re-opens it to in_progress.
     """
     ticket = await _get_ticket_or_404(session, ticket_id)
-    is_privileged = current_user.role in {Role.technician, Role.admin}
     now = _utcnow()
 
-    # Access checks
-    if not is_privileged:
-        if ticket.submitter_id != current_user.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-        if ticket.status in _CLOSED_STATUSES:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot reply to a resolved or closed ticket",
-            )
+    is_internal = body.is_internal
 
-    # Force internal=False for end-users
-    is_internal = body.is_internal and is_privileged
-
-    # Technician reply on a resolved ticket → re-open to in_progress
+    # Public reply on a resolved/closed ticket → re-open to in_progress
     old_status = ticket.status
-    if is_privileged and ticket.status in _CLOSED_STATUSES and not is_internal:
+    if ticket.status in _CLOSED_STATUSES and not is_internal:
         ticket.status = TicketStatus.in_progress
         ticket.resolved_at = None
         ticket.updated_at = now
