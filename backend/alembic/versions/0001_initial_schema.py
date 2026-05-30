@@ -1,9 +1,8 @@
-"""initial schema
+"""Initial schema with all tables and seed data
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-05-29
-
+Create Date: 2026-05-30
 """
 from datetime import datetime, timezone
 from typing import Sequence, Union
@@ -17,6 +16,8 @@ down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_now = datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 def upgrade() -> None:
     # ── users ──────────────────────────────────────────────────────────────────
@@ -28,14 +29,12 @@ def upgrade() -> None:
         sa.Column("avatar_url", sqlmodel.AutoString(), nullable=True),
         sa.Column("role", sa.String(), nullable=False),
         sa.Column("auth_provider", sa.String(), nullable=False),
-        sa.Column("google_sub", sa.String(255), nullable=True),
         sa.Column("slack_user_id", sqlmodel.AutoString(), nullable=True),
         sa.Column("hashed_password", sqlmodel.AutoString(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("last_login_at", sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("google_sub"),
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
     op.create_index("ix_users_slack_user_id", "users", ["slack_user_id"], unique=False)
@@ -169,17 +168,18 @@ def upgrade() -> None:
     op.create_index("ix_audit_log_actor_id", "audit_log", ["actor_id"], unique=False)
     op.create_index("ix_audit_log_created_at", "audit_log", ["created_at"], unique=False)
 
-    # ── notification_preferences ───────────────────────────────────────────────
+    # ── app_settings ───────────────────────────────────────────────────────────
     op.create_table(
-        "notification_preferences",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("event_type", sa.String(), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.PrimaryKeyConstraint("user_id", "event_type"),
+        "app_settings",
+        sa.Column("key",        sa.String(100),  nullable=False),
+        sa.Column("value",      sa.Text(),        nullable=True),
+        sa.Column("is_secret",  sa.Boolean(),     nullable=False, server_default="false"),
+        sa.Column("group_name", sa.String(50),    nullable=False, server_default="app"),
+        sa.Column("updated_at", sa.DateTime(),    nullable=False),
+        sa.PrimaryKeyConstraint("key"),
     )
 
-    # ── seed data: default categories ─────────────────────────────────────────
+    # ── seed: categories ───────────────────────────────────────────────────────
     op.bulk_insert(
         sa.table(
             "categories",
@@ -188,15 +188,56 @@ def upgrade() -> None:
             sa.column("created_at", sa.DateTime),
         ),
         [
-            {"name": "Hardware", "is_archived": False, "created_at": datetime.now(timezone.utc)},
-            {"name": "Software / Applications", "is_archived": False, "created_at": datetime.now(timezone.utc)},
-            {"name": "Access & Permissions", "is_archived": False, "created_at": datetime.now(timezone.utc)},
+            {"name": "Hardware",               "is_archived": False, "created_at": _now},
+            {"name": "Software / Applications","is_archived": False, "created_at": _now},
+            {"name": "Access & Permissions",   "is_archived": False, "created_at": _now},
+        ],
+    )
+
+    # ── seed: SLA policies ─────────────────────────────────────────────────────
+    op.bulk_insert(
+        sa.table(
+            "sla_policies",
+            sa.column("name", sa.String),
+            sa.column("priority", sa.String),
+            sa.column("first_response_minutes", sa.Integer),
+            sa.column("resolution_minutes", sa.Integer),
+        ),
+        [
+            {"name": "Critical SLA", "priority": "critical", "first_response_minutes": 30,  "resolution_minutes": 240},
+            {"name": "High SLA",     "priority": "high",     "first_response_minutes": 60,  "resolution_minutes": 480},
+            {"name": "Medium SLA",   "priority": "medium",   "first_response_minutes": 240, "resolution_minutes": 1440},
+            {"name": "Low SLA",      "priority": "low",      "first_response_minutes": 480, "resolution_minutes": 4320},
+        ],
+    )
+
+    # ── seed: app_settings ─────────────────────────────────────────────────────
+    op.bulk_insert(
+        sa.table(
+            "app_settings",
+            sa.column("key",        sa.String),
+            sa.column("value",      sa.Text),
+            sa.column("is_secret",  sa.Boolean),
+            sa.column("group_name", sa.String),
+            sa.column("updated_at", sa.DateTime),
+        ),
+        [
+            {"key": "setup_complete",           "value": None,     "is_secret": False, "group_name": "app",     "updated_at": _now},
+            {"key": "app_base_url",             "value": None,     "is_secret": False, "group_name": "app",     "updated_at": _now},
+            {"key": "app_secret_key",           "value": None,     "is_secret": False, "group_name": "app",     "updated_at": _now},
+            {"key": "slack_bot_token",          "value": None,     "is_secret": True,  "group_name": "slack",   "updated_at": _now},
+            {"key": "slack_app_token",          "value": None,     "is_secret": True,  "group_name": "slack",   "updated_at": _now},
+            {"key": "slack_signing_secret",     "value": None,     "is_secret": True,  "group_name": "slack",   "updated_at": _now},
+            {"key": "slack_trigger_emoji",      "value": "ticket", "is_secret": False, "group_name": "slack",   "updated_at": _now},
+            {"key": "slack_monitored_channels", "value": "",       "is_secret": False, "group_name": "slack",   "updated_at": _now},
+            {"key": "slack_two_way_sync",       "value": "true",   "is_secret": False, "group_name": "slack",   "updated_at": _now},
+            {"key": "attachment_max_size_mb",   "value": "10",     "is_secret": False, "group_name": "storage", "updated_at": _now},
         ],
     )
 
 
 def downgrade() -> None:
-    op.drop_table("notification_preferences")
+    op.drop_table("app_settings")
     op.drop_table("audit_log")
     op.drop_table("ticket_attachments")
     op.drop_table("ticket_history")
