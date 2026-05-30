@@ -169,6 +169,12 @@ async def update_user(
             changes["name"] = {"from": user.name, "to": body.name}
             user.name = body.name
 
+    if "slack_user_id" in provided:
+        new_sid = body.slack_user_id.strip() if body.slack_user_id else None
+        if user.slack_user_id != new_sid:
+            changes["slack_user_id"] = {"from": user.slack_user_id, "to": new_sid}
+            user.slack_user_id = new_sid
+
     if "role" in provided and body.role is not None:
         if user.role != body.role:
             changes["role"] = {"from": user.role.value, "to": body.role.value}

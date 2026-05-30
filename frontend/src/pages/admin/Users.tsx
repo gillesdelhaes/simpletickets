@@ -5,7 +5,7 @@ import api from '../../lib/api'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type UserRole = 'end_user' | 'technician' | 'admin'
+type UserRole = 'technician' | 'admin'
 type AuthProvider = 'local'
 
 interface UserRead {
@@ -15,6 +15,7 @@ interface UserRead {
   avatar_url: string | null
   role: UserRole
   auth_provider: AuthProvider
+  slack_user_id: string | null
   is_active: boolean
   created_at: string
   last_login_at: string | null
@@ -27,19 +28,16 @@ interface UserListResponse { items: UserRead[]; total: number }
 const ROLE_COLORS: Record<UserRole, string> = {
   admin: '#AD1164',
   technician: '#FF4713',
-  end_user: '#3B82F6',
 }
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Admin',
   technician: 'Technician',
-  end_user: 'End User',
 }
 
 const ROLE_BG: Record<UserRole, string> = {
   admin: '#AD116415',
   technician: '#FF471315',
-  end_user: '#3B82F615',
 }
 
 function timeAgo(d: string) {
@@ -107,7 +105,7 @@ function CreateUserModal({ onClose }: CreateModalProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
-  const [role, setRole] = useState<UserRole>('end_user')
+  const [role, setRole] = useState<UserRole>('technician')
   const [error, setError] = useState<string | null>(null)
   const [focused, setFocused] = useState<string | null>(null)
 
@@ -189,7 +187,6 @@ function CreateUserModal({ onClose }: CreateModalProps) {
                 style={{ ...inp, appearance: 'none', cursor: 'pointer', paddingRight: 28,
                   backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M6 9l6 6 6-6' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
                   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}>
-                <option value="end_user">End User</option>
                 <option value="technician">Technician</option>
                 <option value="admin">Admin</option>
               </select>
@@ -247,7 +244,6 @@ function RoleBadge({ user }: RoleBadgeProps) {
         onBlur={() => setEditing(false)}
         style={{ fontSize: 12, borderRadius: 6, border: '1px solid #E5E5E5', padding: '3px 6px', fontFamily: 'Inter, system-ui, sans-serif', cursor: 'pointer', outline: 'none' }}
       >
-        <option value="end_user">End User</option>
         <option value="technician">Technician</option>
         <option value="admin">Admin</option>
       </select>
@@ -269,6 +265,66 @@ function RoleBadge({ user }: RoleBadgeProps) {
       onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
     >
       {ROLE_LABELS[user.role]}
+    </span>
+  )
+}
+
+// ── Slack ID cell (inline editable) ───────────────────────────────────────────
+
+function SlackIdCell({ user }: { user: UserRead }) {
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(user.slack_user_id ?? '')
+
+  // Keep local value in sync when the row refreshes after a save
+  useEffect(() => {
+    if (!editing) setValue(user.slack_user_id ?? '')
+  }, [user.slack_user_id, editing])
+
+  const mutation = useMutation({
+    mutationFn: (slack_user_id: string | null) =>
+      api.patch<UserRead>(`/admin/users/${user.id}`, { slack_user_id }).then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    },
+    onError: () => {
+      setValue(user.slack_user_id ?? '')
+    },
+  })
+
+  function commit() {
+    // Close immediately for instant feedback; mutation runs in background
+    setEditing(false)
+    const trimmed = value.trim() || null
+    if (trimmed !== user.slack_user_id) mutation.mutate(trimmed)
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); commit() }
+          if (e.key === 'Escape') { setValue(user.slack_user_id ?? ''); setEditing(false) }
+        }}
+        placeholder="U0123ABCDEF"
+        style={{ fontSize: 12, borderRadius: 6, border: '1px solid #FF4713', padding: '3px 8px', outline: 'none', width: 130, fontFamily: 'monospace' }}
+      />
+    )
+  }
+
+  return (
+    <span
+      onClick={() => setEditing(true)}
+      title="Click to set Slack user ID"
+      style={{ fontSize: 11, fontFamily: 'monospace', color: user.slack_user_id ? '#262626' : '#C0C0C0', cursor: 'pointer', padding: '2px 6px', borderRadius: 5, border: '1px dashed transparent', transition: 'all 0.12s' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = '#E5E5E5'; e.currentTarget.style.background = '#F9F9F9' }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'transparent' }}
+    >
+      {user.slack_user_id ?? 'not linked'}
     </span>
   )
 }
@@ -313,7 +369,6 @@ export default function Users() {
 
   const FILTER_PILLS = [
     { id: 'all', label: 'All' },
-    { id: 'end_user', label: 'End User' },
     { id: 'technician', label: 'Technician' },
     { id: 'admin', label: 'Admin' },
   ] as const
@@ -324,7 +379,7 @@ export default function Users() {
     { id: 'inactive', label: 'Inactive' },
   ] as const
 
-  const tableHeaders = ['User', 'Role', 'Provider', 'Status', 'Last Login', 'Created', 'Actions']
+  const tableHeaders = ['User', 'Role', 'Slack ID', 'Status', 'Last Login', 'Created', 'Actions']
 
   return (
     <AdminPageShell title="User Management">
@@ -438,9 +493,9 @@ export default function Users() {
                     <td style={{ padding: '11px 16px' }}>
                       <RoleBadge user={user} />
                     </td>
-                    {/* Provider */}
+                    {/* Slack ID */}
                     <td style={{ padding: '11px 16px' }}>
-                      <span style={{ fontSize: 12, color: '#737373', fontWeight: 500 }}>Local</span>
+                      <SlackIdCell user={user} />
                     </td>
                     {/* Status */}
                     <td style={{ padding: '11px 16px' }}>

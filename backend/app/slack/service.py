@@ -38,11 +38,11 @@ def _utcnow() -> datetime:
 # ── User lookup ────────────────────────────────────────────────────────────────
 
 
-async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
-    """Find an active SimplyTickets user by email (case-insensitive)."""
+async def get_user_by_slack_id(session: AsyncSession, slack_user_id: str) -> Optional[User]:
+    """Find an active SimplyTickets (technician/admin) user by their Slack user ID."""
     result = await session.execute(
         select(User).where(
-            User.email == email.lower(),
+            User.slack_user_id == slack_user_id,
             User.is_active == True,  # noqa: E712
         )
     )
@@ -235,22 +235,23 @@ async def handle_slack_thread_message(
             )
             return
 
-        # Match Slack user → SimplyTickets user
+        # Match Slack user → SimplyTickets user (tech/admin only)
         author_id: Optional[int] = None
         author_name_fallback = "Slack user"
 
         if slack_user_id:
             try:
-                user_info = await client.users_info(user=slack_user_id)
-                profile = user_info.get("user", {}).get("profile", {})
-                slack_email = profile.get("email", "")
-                author_name_fallback = (
-                    profile.get("display_name") or profile.get("real_name", "Slack user")
-                )
-                if slack_email:
-                    matched = await get_user_by_email(session, slack_email)
-                    if matched:
-                        author_id = matched.id
+                matched = await get_user_by_slack_id(session, slack_user_id)
+                if matched:
+                    author_id = matched.id
+                    author_name_fallback = matched.name
+                else:
+                    # Unknown Slack user — try to fetch display name for logging
+                    user_info = await client.users_info(user=slack_user_id)
+                    profile = user_info.get("user", {}).get("profile", {})
+                    author_name_fallback = (
+                        profile.get("display_name") or profile.get("real_name", "Slack user")
+                    )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "handle_slack_thread_message: user lookup failed for %s", slack_user_id

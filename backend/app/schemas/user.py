@@ -13,6 +13,7 @@ class UserRead(BaseModel):
     avatar_url: Optional[str]
     role: Role
     auth_provider: AuthProvider
+    slack_user_id: Optional[str]
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]
@@ -25,6 +26,7 @@ class UserAdminUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[Role] = None
     is_active: Optional[bool] = None
+    slack_user_id: Optional[str] = None
 
     from pydantic import field_validator
 

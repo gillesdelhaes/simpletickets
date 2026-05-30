@@ -92,7 +92,7 @@ async def _fetch_enriched(
                 category_id=ticket.category_id,
                 category_name=cat_name,
                 submitter_id=ticket.submitter_id,
-                submitter_name=sub_name,
+                submitter_name=sub_name or ticket.slack_submitter_name,
                 assignee_id=ticket.assignee_id,
                 assignee_name=asg_name,
                 sla_policy_id=ticket.sla_policy_id,

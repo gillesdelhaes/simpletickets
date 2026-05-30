@@ -1,10 +1,12 @@
 """
 Slack Bolt event handlers — registered on the AsyncApp in bot.py.
 
-Handlers:
-  reaction_added      → emoji reaction creates a ticket
-  /ticket             → slash command opens a modal
-  view_submission     → modal submit creates a ticket + DMs the user
+Interaction model:
+  /ticket             → slash command opens a modal; any Slack user can submit
+  DM to bot           → creates a ticket from the message text
+  reaction_added      → technician/admin reacts with trigger emoji to convert a
+                        channel message into a ticket (reactor must exist in DB)
+  message (thread)    → syncs Slack thread replies back to the web portal
 """
 from __future__ import annotations
 
@@ -16,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings_manager
 from app.database import AsyncSessionLocal
-from app.models import Category
-from app.models.enums import Priority
+from app.models import Category, Ticket
+from app.models.enums import Priority, TicketStatus
 from app.slack.service import (
     create_ticket_from_slack,
-    get_user_by_email,
+    get_user_by_slack_id,
     handle_slack_thread_message,
 )
 
@@ -42,10 +44,6 @@ def _channel_is_monitored(channel_id: str) -> bool:
     return not _MONITORED_CHANNELS or channel_id in _MONITORED_CHANNELS
 
 
-def _ticket_url(ticket_id: int) -> str:
-    return f"{settings_manager.app_base_url}/tickets/{ticket_id}"
-
-
 async def _fetch_categories() -> list[dict]:
     """Fetch active categories for the /ticket modal dropdown."""
     async with AsyncSessionLocal() as session:
@@ -56,35 +54,58 @@ async def _fetch_categories() -> list[dict]:
                 for c in result.scalars().all()]
 
 
-# ── reaction_added ─────────────────────────────────────────────────────────────
+async def _slack_display_name(client: Any, slack_user_id: str) -> str:
+    """Fetch Slack display name for a user ID. Falls back to the ID itself."""
+    try:
+        info = await client.users_info(user=slack_user_id)
+        profile = info.get("user", {}).get("profile", {})
+        return profile.get("display_name") or profile.get("real_name") or slack_user_id
+    except Exception:  # noqa: BLE001
+        return slack_user_id
+
+
+# ── handler registration ───────────────────────────────────────────────────────
 
 def register_handlers(app: Any) -> None:
     """Register all event/action/command handlers on the Bolt AsyncApp."""
 
     _load_monitored_channels()
 
+    # ── reaction_added ─────────────────────────────────────────────────────────
+
     @app.event("reaction_added")
-    async def handle_reaction_added(event: dict, client: Any, say: Any) -> None:
+    async def handle_reaction_added(event: dict, client: Any) -> None:
         """
-        When the trigger emoji is added to a message:
-        1. Verify channel is monitored.
-        2. Fetch the original message text.
-        3. Match Slack user → SimplyTickets user via email.
-        4. Create a ticket.
-        5. Post a thread reply confirming creation (or warning if unmatched).
+        Convert a channel message to a ticket when a technician/admin reacts
+        with the configured trigger emoji.
+
+        The REACTOR must exist in SimplyTickets as a tech or admin (matched via
+        slack_user_id). Any Slack user can be the original message author.
         """
         emoji = event.get("reaction", "")
         if emoji != settings_manager.slack_trigger_emoji:
             return
 
+        reactor_slack_id: str = event.get("user", "")
         item = event.get("item", {})
-        channel_id = item.get("channel", "")
-        message_ts = item.get("ts", "")
+        channel_id: str = item.get("channel", "")
+        message_ts: str = item.get("ts", "")
 
-        if not _channel_is_monitored(channel_id):
+        # No monitored-channel filter here — a tech explicitly reacting
+        # is always intentional, regardless of channel configuration.
+
+        # ── Verify reactor is a technician/admin ───────────────────────────
+        async with AsyncSessionLocal() as session:
+            reactor = await get_user_by_slack_id(session, reactor_slack_id)
+
+        if reactor is None:
+            logger.debug(
+                "reaction_added: ignoring — reactor %s is not a SimplyTickets tech/admin",
+                reactor_slack_id,
+            )
             return
 
-        # ── Fetch the original message ──────────────────────────────────────
+        # ── Fetch the original message ─────────────────────────────────────
         try:
             history = await client.conversations_history(
                 channel=channel_id,
@@ -96,51 +117,28 @@ def register_handlers(app: Any) -> None:
             if not messages:
                 logger.warning("reaction_added: no message found at ts=%s", message_ts)
                 return
-            original_message = messages[0]
-            message_text = original_message.get("text", "(no content)")
-            slack_user_id = original_message.get("user", "")
+            original = messages[0]
+            message_text: str = original.get("text", "") or ""
+            author_slack_id: str = original.get("user", "")
         except Exception:  # noqa: BLE001
             logger.exception("reaction_added: failed to fetch message")
             return
 
-        # ── Match Slack user to SimplyTickets user ──────────────────────────
-        submitter_id = None
-        submitter_name_fallback = None
+        # ── Get message author display name ────────────────────────────────
+        submitter_name = await _slack_display_name(client, author_slack_id) if author_slack_id else "Slack user"
 
-        if slack_user_id:
-            try:
-                user_info = await client.users_info(user=slack_user_id)
-                profile = user_info.get("user", {}).get("profile", {})
-                slack_email = profile.get("email", "")
-                slack_display = profile.get("display_name") or profile.get("real_name", "Unknown")
-
-                submitter_name_fallback = slack_display
-
-                if slack_email:
-                    async with AsyncSessionLocal() as session:
-                        matched = await get_user_by_email(session, slack_email)
-                        if matched:
-                            submitter_id = matched.id
-                            submitter_name_fallback = None  # linked — no need for fallback name
-            except Exception:  # noqa: BLE001
-                logger.exception("reaction_added: failed to look up Slack user %s", slack_user_id)
-
-        # ── Build title from first line of message ──────────────────────────
+        # ── Build title ────────────────────────────────────────────────────
         first_line = message_text.split("\n")[0].strip()
         title = first_line[:200] if first_line else "Ticket from Slack"
-        if len(message_text) > len(title):
-            description = message_text
-        else:
-            description = message_text or title
+        description = message_text or title
 
-        # ── Create ticket ───────────────────────────────────────────────────
+        # ── Create ticket ──────────────────────────────────────────────────
         try:
             ticket = await create_ticket_from_slack(
                 title=title,
                 description=description,
                 priority=Priority.medium,
-                submitter_id=submitter_id,
-                slack_submitter_name=submitter_name_fallback,
+                slack_submitter_name=submitter_name,
                 slack_channel_id=channel_id,
                 slack_message_ts=message_ts,
             )
@@ -149,70 +147,149 @@ def register_handlers(app: Any) -> None:
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=message_ts,
-                text="⚠️ Failed to create a ticket. Please try again or submit via the portal.",
+                text="⚠️ Failed to create a ticket. Please try again.",
             )
             return
 
-        # ── Post thread reply ───────────────────────────────────────────────
-        ticket_link = _ticket_url(ticket.id)
-
-        if submitter_id is not None:
-            # Matched user — success
-            reply_text = (
-                f"✅ Ticket *<{ticket_link}|{ticket.display_id}>* created successfully!\n"
-                f"Our team will get back to you shortly."
-            )
-        else:
-            # Unmatched user — warn
-            name_hint = f" (submitted by *{submitter_name_fallback}*)" if submitter_name_fallback else ""
-            reply_text = (
-                f"⚠️ Ticket *<{ticket_link}|{ticket.display_id}>* created{name_hint}, "
-                f"but no SimplyTickets account was found for this Slack user.\n"
-                f"An admin can link the ticket to an account manually."
-            )
-
+        # ── Post thread confirmation ───────────────────────────────────────
         try:
             await client.chat_postMessage(
                 channel=channel_id,
                 thread_ts=message_ts,
-                text=reply_text,
+                text=f"✅ Ticket *{ticket.display_id}* created. Our team will follow up shortly.",
             )
         except Exception:  # noqa: BLE001
             logger.exception("reaction_added: failed to post thread reply for %s", ticket.display_id)
 
-    # ── Inbound thread replies (Web ← Slack sync) ─────────────────────────────
+    # ── message (DM + thread sync) ─────────────────────────────────────────────
 
     @app.event("message")
     async def handle_message(event: dict, client: Any) -> None:
         """
-        When a human posts a reply inside a SimplyTickets Slack thread,
-        sync it back as a public reply on the ticket.
-
-        Filters:
-        - Must be a thread reply (thread_ts set, thread_ts != ts)
-        - Must be a human message (no bot_id, no subtype)
-        - Channel must be monitored (or monitoring is off)
+        Three cases:
+        1. DM thread reply → sync to existing ticket.
+        2. Top-level DM with an active ticket in this channel → add as reply.
+        3. Top-level DM with no active ticket → create a new ticket.
+        4. Thread reply in a monitored channel → sync back to the web portal.
         """
-        # Skip bot messages and system events (message_changed, message_deleted, etc.)
+        # Skip bot messages and system subtypes (message_changed, etc.)
         if event.get("subtype") is not None:
             return
         if event.get("bot_id"):
             return
 
-        thread_ts: str = event.get("thread_ts", "")
-        message_ts: str = event.get("ts", "")
+        channel_type: str = event.get("channel_type", "")
         slack_user_id: str = event.get("user", "")
+        text: str = event.get("text", "") or ""
+        channel_id: str = event.get("channel", "")
+        message_ts: str = event.get("ts", "")
+        thread_ts: str = event.get("thread_ts", "")
 
-        # Only process replies (not the original message that started the thread)
+        # Slack doesn't always populate channel_type on threaded DM replies,
+        # so detect DM channels by ID prefix as a fallback.
+        is_dm = channel_type == "im" or channel_id.startswith("D")
+
+        # ── DM to bot ──────────────────────────────────────────────────────
+        if is_dm:
+            if not text.strip():
+                return
+
+            # Explicit thread reply → sync to whichever ticket owns that thread
+            if thread_ts and thread_ts != message_ts:
+                try:
+                    await handle_slack_thread_message(
+                        channel_id=channel_id,
+                        thread_ts=thread_ts,
+                        message_ts=message_ts,
+                        slack_user_id=slack_user_id,
+                        text=text,
+                        client=client,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "handle_message(DM thread): sync failed ts=%s channel=%s",
+                        message_ts, channel_id,
+                    )
+                return
+
+            # Top-level DM — check if this DM channel already has an active ticket.
+            # If so, treat the message as a follow-up reply rather than a new ticket.
+            active_ticket: Ticket | None = None
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Ticket)
+                    .where(
+                        Ticket.slack_channel_id == channel_id,
+                        Ticket.status.not_in([TicketStatus.resolved, TicketStatus.closed]),
+                    )
+                    .order_by(Ticket.created_at.desc())
+                    .limit(1)
+                )
+                active_ticket = result.scalar_one_or_none()
+
+            if active_ticket is not None and active_ticket.slack_message_ts:
+                try:
+                    await handle_slack_thread_message(
+                        channel_id=channel_id,
+                        thread_ts=active_ticket.slack_message_ts,
+                        message_ts=message_ts,
+                        slack_user_id=slack_user_id,
+                        text=text,
+                        client=client,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "handle_message(DM follow-up): sync failed for ticket %s",
+                        active_ticket.display_id,
+                    )
+                return
+
+            submitter_name = await _slack_display_name(client, slack_user_id) if slack_user_id else "Slack user"
+
+            first_line = text.split("\n")[0].strip()
+            title = first_line[:200] if first_line else "Ticket from DM"
+            description = text.strip() or title
+
+            try:
+                ticket = await create_ticket_from_slack(
+                    title=title,
+                    description=description,
+                    priority=Priority.medium,
+                    slack_submitter_name=submitter_name,
+                    slack_channel_id=channel_id,
+                    slack_message_ts=message_ts,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("handle_message(DM): ticket creation failed for user %s", slack_user_id)
+                try:
+                    await client.chat_postMessage(
+                        channel=channel_id,
+                        text="⚠️ Something went wrong creating your ticket. Please try again.",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+            try:
+                await client.chat_postMessage(
+                    channel=channel_id,
+                    text=(
+                        f"✅ Ticket *{ticket.display_id}* has been submitted.\n"
+                        f"*{ticket.title}*\n"
+                        f"Our team will get back to you shortly."
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("handle_message(DM): failed to confirm ticket to user %s", slack_user_id)
+            return
+
+        # ── Case 2: Thread reply sync ──────────────────────────────────────
+        # Only process replies (thread_ts set and differs from the message ts)
         if not thread_ts or thread_ts == message_ts:
             return
 
-        channel_id: str = event.get("channel", "")
-
         if not _channel_is_monitored(channel_id):
             return
-
-        text: str = event.get("text", "")
 
         try:
             await handle_slack_thread_message(
@@ -233,10 +310,7 @@ def register_handlers(app: Any) -> None:
 
     @app.command("/ticket")
     async def handle_ticket_command(ack: Any, body: dict, client: Any) -> None:
-        """
-        Open a modal allowing the user to submit a ticket with title,
-        description, and optional category.
-        """
+        """Open a modal so the user can submit a ticket with title, description, and priority."""
         await ack()
 
         category_options = await _fetch_categories()
@@ -295,7 +369,6 @@ def register_handlers(app: Any) -> None:
             ],
         }
 
-        # Add category dropdown only if categories exist
         if category_options:
             view["blocks"].append(
                 {
@@ -322,49 +395,31 @@ def register_handlers(app: Any) -> None:
     @app.view("ticket_modal")
     async def handle_modal_submission(ack: Any, body: dict, client: Any, view: dict) -> None:
         """
-        Process the /ticket modal submission:
-        1. Acknowledge immediately.
-        2. Extract values.
-        3. Match Slack user → SimplyTickets user.
-        4. Create ticket.
-        5. Send a DM with the ticket link.
+        Process the /ticket modal submission.
+
+        Opens a DM channel with the submitter and posts the confirmation there.
+        That DM message ts is saved as slack_message_ts so web-portal replies
+        thread back to the user automatically.
         """
         await ack()
 
         state_values = view["state"]["values"]
-        title = state_values["title_block"]["title_input"]["value"] or ""
-        description = state_values["description_block"]["description_input"]["value"] or ""
+        title = (state_values["title_block"]["title_input"]["value"] or "").strip()
+        description = (state_values["description_block"]["description_input"]["value"] or "").strip()
         priority_value = (
-            state_values["priority_block"]["priority_select"].get("selected_option", {}) or {}
-        ).get("value", "medium")
+            (state_values["priority_block"]["priority_select"].get("selected_option") or {})
+            .get("value", "medium")
+        )
         category_value = None
         if "category_block" in state_values:
-            selected = (state_values["category_block"]["category_select"].get("selected_option") or {})
+            selected = state_values["category_block"]["category_select"].get("selected_option") or {}
             category_value = int(selected["value"]) if selected.get("value") else None
 
-        slack_user_id = body.get("user", {}).get("id", "")
-        submitter_id = None
-        submitter_name_fallback = None
+        slack_user_id: str = body.get("user", {}).get("id", "")
 
-        # ── Match user ──────────────────────────────────────────────────────
-        if slack_user_id:
-            try:
-                user_info = await client.users_info(user=slack_user_id)
-                profile = user_info.get("user", {}).get("profile", {})
-                slack_email = profile.get("email", "")
-                slack_display = profile.get("display_name") or profile.get("real_name", "Unknown")
-                submitter_name_fallback = slack_display
+        # Fetch display name (no email lookup — end users are Slack-only)
+        submitter_name = await _slack_display_name(client, slack_user_id) if slack_user_id else "Slack user"
 
-                if slack_email:
-                    async with AsyncSessionLocal() as session:
-                        matched = await get_user_by_email(session, slack_email)
-                        if matched:
-                            submitter_id = matched.id
-                            submitter_name_fallback = None
-            except Exception:  # noqa: BLE001
-                logger.exception("ticket_modal: user lookup failed for %s", slack_user_id)
-
-        # ── Create ticket ───────────────────────────────────────────────────
         try:
             priority = Priority(priority_value)
         except ValueError:
@@ -372,40 +427,44 @@ def register_handlers(app: Any) -> None:
 
         try:
             ticket = await create_ticket_from_slack(
-                title=title.strip() or "Ticket from Slack",
-                description=description.strip() or title.strip() or "Submitted via Slack.",
+                title=title or "Ticket from Slack",
+                description=description or title or "Submitted via Slack.",
                 priority=priority,
                 category_id=category_value,
-                submitter_id=submitter_id,
-                slack_submitter_name=submitter_name_fallback,
+                slack_submitter_name=submitter_name,
             )
         except Exception:  # noqa: BLE001
             logger.exception("ticket_modal: ticket creation failed")
-            # DM the user about the failure
             try:
                 await client.chat_postMessage(
                     channel=slack_user_id,
-                    text="⚠️ Something went wrong creating your ticket. Please try again or use the portal.",
+                    text="⚠️ Something went wrong creating your ticket. Please try again.",
                 )
             except Exception:  # noqa: BLE001
                 pass
             return
 
-        # ── DM the user ─────────────────────────────────────────────────────
-        ticket_link = _ticket_url(ticket.id)
-        dm_text = (
-            f"✅ Your ticket *<{ticket_link}|{ticket.display_id}>* has been submitted!\n"
-            f"*{ticket.title}*\n"
-            f"Our team will get back to you shortly."
-        )
-
-        if submitter_id is None:
-            dm_text += (
-                f"\n\n⚠️ We couldn't link this ticket to a SimplyTickets account. "
-                f"An admin can do this manually."
-            )
-
-        try:
-            await client.chat_postMessage(channel=slack_user_id, text=dm_text)
-        except Exception:  # noqa: BLE001
-            logger.exception("ticket_modal: failed to DM user %s", slack_user_id)
+        # Post DM confirmation using the user ID as channel — Slack auto-routes
+        # to the DM without needing conversations_open / im:write scope.
+        # Save the returned channel + ts on the ticket so web replies thread here.
+        if slack_user_id:
+            try:
+                result = await client.chat_postMessage(
+                    channel=slack_user_id,
+                    text=(
+                        f"✅ Ticket *{ticket.display_id}* has been submitted.\n"
+                        f"*{ticket.title}*\n"
+                        f"Our team will get back to you shortly."
+                    ),
+                )
+                dm_channel_id: str | None = result.get("channel")
+                message_ts: str | None = result.get("ts")
+                if dm_channel_id and message_ts:
+                    async with AsyncSessionLocal() as session:
+                        t = await session.get(Ticket, ticket.id)
+                        if t:
+                            t.slack_channel_id = dm_channel_id
+                            t.slack_message_ts = message_ts
+                            await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("ticket_modal: failed to DM user %s", slack_user_id)

@@ -10,6 +10,7 @@ Lifecycle:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.config import settings_manager
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _slack_app = None
 _socket_handler = None
+_socket_task: asyncio.Task | None = None
 
 
 def create_app():
@@ -48,8 +50,8 @@ def create_app():
 
 
 async def start_slack() -> None:
-    """Start the Slack Socket Mode handler in the background."""
-    global _slack_app, _socket_handler
+    """Start the Slack Socket Mode handler as a background task."""
+    global _slack_app, _socket_handler, _socket_task
 
     app = create_app()
     if app is None:
@@ -60,17 +62,19 @@ async def start_slack() -> None:
 
         _slack_app = app
         _socket_handler = AsyncSocketModeHandler(app, settings_manager.slack_app_token)
-        await _socket_handler.start_async()
-        logger.info("Slack Socket Mode handler connected.")
+        # start_async() blocks until disconnected — run it as a background task
+        _socket_task = asyncio.create_task(_socket_handler.start_async())
+        logger.info("Slack Socket Mode handler started in background.")
     except Exception:  # noqa: BLE001
         logger.exception("Slack Socket Mode handler failed to start.")
         _slack_app = None
         _socket_handler = None
+        _socket_task = None
 
 
 async def stop_slack() -> None:
     """Cleanly disconnect the Slack Socket Mode handler."""
-    global _slack_app, _socket_handler
+    global _slack_app, _socket_handler, _socket_task
     if _socket_handler is not None:
         try:
             await _socket_handler.close_async()
@@ -80,13 +84,13 @@ async def stop_slack() -> None:
         finally:
             _socket_handler = None
             _slack_app = None
+    if _socket_task is not None:
+        _socket_task.cancel()
+        _socket_task = None
 
 
 async def reload_slack() -> None:
-    """
-    Stop the current bot and restart with freshly cached credentials.
-    Call after settings_manager cache has been invalidated.
-    """
+    """Stop the current bot and restart with freshly cached credentials."""
     logger.info("Reloading Slack integration with updated credentials...")
     await stop_slack()
     await start_slack()
