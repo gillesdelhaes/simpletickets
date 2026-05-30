@@ -87,7 +87,7 @@ async def get_unread(
     my_unread_tickets: list[UnreadTicketSummary] = []
     if unread_ticket_ids:
         my_tickets_stmt = (
-            select(Ticket.id, Ticket.display_id, Ticket.title)
+            select(Ticket.id, Ticket.title)
             .where(
                 Ticket.id.in_(unread_ticket_ids),
                 Ticket.assignee_id == current_user.id,
@@ -96,7 +96,8 @@ async def get_unread(
         )
         rows = (await session.execute(my_tickets_stmt)).all()
         my_unread_tickets = [
-            UnreadTicketSummary(id=r[0], display_id=r[1], title=r[2]) for r in rows
+            UnreadTicketSummary(id=r[0], display_id=f"TKT-{r[0]:04d}", title=r[1])
+            for r in rows
         ]
 
     return UnreadResponse(
