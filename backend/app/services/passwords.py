@@ -1,12 +1,9 @@
-from passlib.context import CryptContext
-
-# bcrypt cost factor 12 — deliberately slow to resist brute-force
-_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+import bcrypt
 
 
 def hash_password(plain: str) -> str:
-    return _ctx.hash(plain)
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt(12)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _ctx.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())

@@ -6,6 +6,7 @@ export type UserRole = 'end_user' | 'technician' | 'admin'
 export interface AuthUser {
   id: number
   email: string
+  name: string
   role: UserRole
 }
 
@@ -42,12 +43,14 @@ function tokenToUser(token: string): AuthUser | null {
   const sub = payload['sub']
   const email = payload['email']
   const role = payload['role']
+  const name = payload['name']
 
   if (!sub || !email || !role) return null
 
   return {
     id: Number(sub),
     email: String(email),
+    name: name ? String(name) : String(email).split('@')[0],
     role: String(role) as UserRole,
   }
 }

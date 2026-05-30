@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.models import Ticket, TicketHistory
 from app.models.enums import TicketStatus
-from app.services.notifications import notify_sla_breached
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ def sla_remaining_seconds(ticket: Ticket) -> int | None:
     if ticket.sla_deadline is None:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     deadline = ticket.sla_deadline
 
     # If currently paused, the clock hasn't advanced since sla_paused_at
@@ -98,7 +97,7 @@ def apply_sla_status_change(ticket: Ticket, new_status: TicketStatus) -> None:
     Call this whenever a ticket's status changes to update SLA pause state.
     Mutates the ticket object in place — caller must commit.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if new_status == _PAUSED_STATUS and ticket.sla_paused_at is None:
         # Entering pending_user — freeze the clock
@@ -131,7 +130,7 @@ async def _check_sla_breaches() -> None:
     Runs every minute via APScheduler.
     Skips paused tickets (pending_user) and already-breached ones.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Build a fresh async session for this background task
     async for session in get_session():
@@ -165,17 +164,6 @@ async def _check_sla_breaches() -> None:
 
             await session.commit()
             logger.info("SLA check: %d ticket(s) marked breached", len(breached))
-
-            # Send breach notifications after commit
-            for ticket in breached:
-                await notify_sla_breached(
-                    session=session,
-                    ticket_id=ticket.id,
-                    ticket_display_id=ticket.display_id,
-                    ticket_title=ticket.title,
-                    ticket_priority=ticket.priority.value,
-                    assignee_id=ticket.assignee_id,
-                )
 
         except Exception as exc:
             logger.error("SLA breach-check failed: %s", exc)

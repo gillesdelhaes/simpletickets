@@ -2,9 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 
-from app.auth.google import init_oauth
 from app.config import settings
 from app.slack.bot import start_slack, stop_slack
 from app.routers import (
@@ -14,7 +12,6 @@ from app.routers import (
     categories,
     health,
     history,
-    notification_prefs,
     replies,
     search,
     sla,
@@ -26,12 +23,9 @@ from app.services.sla import start_scheduler, stop_scheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    init_oauth()
     start_scheduler()
     await start_slack()
     yield
-    # Shutdown
     await stop_slack()
     stop_scheduler()
 
@@ -45,14 +39,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# SessionMiddleware must wrap the app before CORS so that
-# Authlib can read/write the OIDC state cookie in route handlers.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.app_secret_key,
-    same_site="lax",
-    https_only=False,  # set True behind HTTPS in production
-)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.app_base_url],
@@ -71,5 +57,4 @@ app.include_router(replies.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(sla.router, prefix="/api")
-app.include_router(notification_prefs.router, prefix="/api")
 app.include_router(history.router, prefix="/api")

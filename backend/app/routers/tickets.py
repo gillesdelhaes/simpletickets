@@ -20,11 +20,6 @@ from app.database import get_session
 from app.models import Category, SLAPolicy, Ticket, TicketHistory, User
 from app.models.enums import Priority, Role, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketListResponse, TicketRead, TicketUpdate
-from app.services.notifications import (
-    notify_ticket_assigned,
-    notify_ticket_created,
-    notify_status_changed,
-)
 from app.services.sla import apply_sla_status_change
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -38,7 +33,7 @@ _END_USER_EDITABLE = {"title", "description", "category_id"}
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def _fetch_enriched(
@@ -209,18 +204,6 @@ async def create_ticket(
 
     await session.commit()
     await session.refresh(ticket)
-
-    # Fire-and-forget notification (errors are swallowed inside the function)
-    await notify_ticket_created(
-        session=session,
-        ticket_id=ticket.id,
-        ticket_display_id=ticket.display_id,
-        ticket_title=ticket.title,
-        ticket_priority=ticket.priority.value,
-        submitter_id=current_user.id,
-        submitter_name=current_user.name,
-        submitter_email=current_user.email,
-    )
 
     # Return enriched response
     items, _ = await _fetch_enriched(session, [Ticket.id == ticket.id])
@@ -438,39 +421,15 @@ async def update_ticket(
     await session.commit()
     await session.refresh(ticket)
 
-    # Notifications — fire-and-forget after commit
+    # Slack thread status sync
     if "status" in changes:
-        old_s, new_s = changes["status"]
-        await notify_status_changed(
-            session=session,
-            ticket_id=ticket.id,
-            ticket_display_id=ticket.display_id,
-            ticket_title=ticket.title,
-            old_status=old_s or "",
-            new_status=new_s or "",
-            submitter_id=ticket.submitter_id,
-            actor_id=current_user.id,
-        )
-        # ── Slack thread status notification ────────────────────────────────
+        _, new_s = changes["status"]
         if ticket.slack_channel_id and ticket.slack_message_ts:
             try:
                 from app.slack.service import post_status_to_slack
                 await post_status_to_slack(ticket, new_s or "", current_user.name)
             except Exception:  # noqa: BLE001
-                pass  # post_status_to_slack already logs internally
-
-    if "assignee_id" in changes:
-        _, new_a = changes["assignee_id"]
-        if new_a:
-            await notify_ticket_assigned(
-                session=session,
-                ticket_id=ticket.id,
-                ticket_display_id=ticket.display_id,
-                ticket_title=ticket.title,
-                ticket_priority=ticket.priority.value,
-                assignee_id=int(new_a),
-                actor_id=current_user.id,
-            )
+                pass
 
     items, _ = await _fetch_enriched(session, [Ticket.id == ticket_id])
     return items[0]

@@ -4,7 +4,6 @@
 from app.models.enums import (  # noqa: F401
     AuthProvider,
     Channel,
-    NotificationEvent,
     Priority,
     Role,
     TicketStatus,
@@ -17,12 +16,10 @@ from app.models.ticket_reply import TicketReply  # noqa: F401
 from app.models.ticket_history import TicketHistory  # noqa: F401
 from app.models.ticket_attachment import TicketAttachment  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
-from app.models.notification_preference import NotificationPreference  # noqa: F401
 
 __all__ = [
     "AuthProvider",
     "Channel",
-    "NotificationEvent",
     "Priority",
     "Role",
     "TicketStatus",
@@ -34,5 +31,4 @@ __all__ = [
     "TicketHistory",
     "TicketAttachment",
     "AuditLog",
-    "NotificationPreference",
 ]

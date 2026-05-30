@@ -2,9 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import AppShell from '../components/layout/AppShell'
-import PortalLayout from './portal/PortalLayout'
-import StatusBadge from '../components/tickets/StatusBadge'
-import PriorityBadge from '../components/tickets/PriorityBadge'
 import SLABadge from '../components/tickets/SLABadge'
 import { useTicket } from '../hooks/useTicket'
 import { useReplies, useAddReply, type ReplyRead } from '../hooks/useReplies'
@@ -442,7 +439,6 @@ interface MetaSidebarProps {
   ticket: TicketRead
   isAdmin: boolean
   currentUserId: number
-  currentUserName: string | null
 }
 
 const selectStyle: React.CSSProperties = {
@@ -463,7 +459,7 @@ const selectStyle: React.CSSProperties = {
   paddingRight: 28,
 }
 
-function MetaSidebar({ ticket, isAdmin, currentUserId, currentUserName }: MetaSidebarProps) {
+function MetaSidebar({ ticket, isAdmin, currentUserId }: MetaSidebarProps) {
   const queryClient = useQueryClient()
   const { data: categories } = useCategories()
   const { data: agents } = useAgents()
@@ -831,52 +827,13 @@ function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
 
 // ── End-user metadata strip ────────────────────────────────────────────────────
 
-function MetaStrip({ ticket }: { ticket: TicketRead }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        flexWrap: 'wrap',
-        marginBottom: 20,
-        padding: '10px 16px',
-        background: '#fff',
-        border: '1px solid #E5E5E5',
-        borderRadius: 10,
-      }}
-    >
-      <StatusBadge status={ticket.status} />
-      <PriorityBadge priority={ticket.priority} />
-      {ticket.sla_deadline && <SLABadge ticket={ticket} variant="pill" />}
-      {ticket.category_name && (
-        <span
-          style={{
-            fontSize: 12,
-            color: '#737373',
-            background: '#F2F2F2',
-            padding: '2px 8px',
-            borderRadius: 4,
-          }}
-        >
-          {ticket.category_name}
-        </span>
-      )}
-      <span style={{ fontSize: 12, color: '#A3A3A3', marginLeft: 'auto' }}>
-        Opened {timeAgo(ticket.created_at)}
-      </span>
-    </div>
-  )
-}
-
 // ── Breadcrumb ─────────────────────────────────────────────────────────────────
 
 interface BreadcrumbProps {
   ticket: TicketRead
-  isTech: boolean
 }
 
-function Breadcrumb({ ticket, isTech }: BreadcrumbProps) {
+function Breadcrumb({ ticket }: BreadcrumbProps) {
   return (
     <div
       style={{
@@ -889,12 +846,12 @@ function Breadcrumb({ ticket, isTech }: BreadcrumbProps) {
       }}
     >
       <Link
-        to={isTech ? '/queue' : '/portal'}
+        to="/queue"
         style={{ color: '#737373', textDecoration: 'none', fontWeight: 500 }}
         onMouseEnter={e => (e.currentTarget.style.color = '#FF4713')}
         onMouseLeave={e => (e.currentTarget.style.color = '#737373')}
       >
-        {isTech ? 'Queue' : 'My Tickets'}
+        Queue
       </Link>
       <span style={{ color: '#D4D4D4' }}>/</span>
       <span
@@ -921,57 +878,39 @@ export default function TicketDetail() {
 
   const { data: ticket, isLoading, error } = useTicket(ticketId)
 
-  const isTech = user?.role === 'technician' || user?.role === 'admin'
   const isAdmin = user?.role === 'admin'
 
   if (isLoading) {
-    if (isTech) {
-      return (
-        <AppShell title="Loading…">
-          <div style={{ padding: '28px 32px' }}>
-            <div style={{ height: 24, width: 200, borderRadius: 6, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite', marginBottom: 20 }} />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24 }}>
-              <div style={{ height: 400, borderRadius: 12, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite' }} />
-              <div style={{ height: 400, borderRadius: 12, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite' }} />
-            </div>
-          </div>
-        </AppShell>
-      )
-    }
     return (
-      <PortalLayout>
-        <div style={{ height: 300, borderRadius: 12, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite' }} />
-      </PortalLayout>
+      <AppShell title="Loading…">
+        <div style={{ padding: '28px 32px' }}>
+          <div style={{ height: 24, width: 200, borderRadius: 6, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite', marginBottom: 20 }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24 }}>
+            <div style={{ height: 400, borderRadius: 12, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite' }} />
+            <div style={{ height: 400, borderRadius: 12, background: '#F2F2F2', animation: 'shimmer 1.5s ease-in-out infinite' }} />
+          </div>
+        </div>
+      </AppShell>
     )
   }
 
   if (error || !ticket) {
-    const msg = 'Ticket not found or you don\'t have permission to view it.'
-    if (isTech) {
-      return (
-        <AppShell title="Not Found">
-          <div style={{ padding: '28px 32px', textAlign: 'center' }}>
-            <p style={{ color: '#737373' }}>{msg}</p>
-            <button onClick={() => navigate('/queue')} style={{ marginTop: 16, color: '#FF4713', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>
-              ← Back to queue
-            </button>
-          </div>
-        </AppShell>
-      )
-    }
     return (
-      <PortalLayout>
-        <p style={{ color: '#737373' }}>{msg}</p>
-      </PortalLayout>
+      <AppShell title="Not Found">
+        <div style={{ padding: '28px 32px', textAlign: 'center' }}>
+          <p style={{ color: '#737373' }}>Ticket not found or you don&apos;t have permission to view it.</p>
+          <button onClick={() => navigate('/queue')} style={{ marginTop: 16, color: '#FF4713', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>
+            ← Back to queue
+          </button>
+        </div>
+      </AppShell>
     )
   }
 
-  // ── Technician / Admin view ──────────────────────────────────────────────────
-  if (isTech) {
-    return (
+  return (
       <AppShell title={ticket.display_id}>
         <div style={{ padding: '24px 32px', maxWidth: 1200 }}>
-          <Breadcrumb ticket={ticket} isTech />
+          <Breadcrumb ticket={ticket} />
 
           {/* Title */}
           <h1
@@ -1037,7 +976,6 @@ export default function TicketDetail() {
               ticket={ticket}
               isAdmin={isAdmin}
               currentUserId={user?.id ?? 0}
-              currentUserName={user?.email ?? null}
             />
           </div>
         </div>
@@ -1048,35 +986,5 @@ export default function TicketDetail() {
           @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
         `}</style>
       </AppShell>
-    )
-  }
-
-  // ── End-user view ────────────────────────────────────────────────────────────
-  return (
-    <PortalLayout>
-      <Breadcrumb ticket={ticket} isTech={false} />
-
-      <h1
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: '#0A0A0A',
-          letterSpacing: '-0.02em',
-          marginBottom: 14,
-          lineHeight: 1.3,
-        }}
-      >
-        {ticket.title}
-      </h1>
-
-      <MetaStrip ticket={ticket} />
-      <ThreadColumn ticket={ticket} isTech={false} currentUserId={user?.id} />
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
-    </PortalLayout>
   )
 }

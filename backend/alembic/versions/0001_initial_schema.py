@@ -5,6 +5,7 @@ Revises:
 Create Date: 2026-05-29
 
 """
+from datetime import datetime, timezone
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -187,9 +188,9 @@ def upgrade() -> None:
             sa.column("created_at", sa.DateTime),
         ),
         [
-            {"name": "Hardware", "is_archived": False, "created_at": sa.func.now()},
-            {"name": "Software / Applications", "is_archived": False, "created_at": sa.func.now()},
-            {"name": "Access & Permissions", "is_archived": False, "created_at": sa.func.now()},
+            {"name": "Hardware", "is_archived": False, "created_at": datetime.now(timezone.utc)},
+            {"name": "Software / Applications", "is_archived": False, "created_at": datetime.now(timezone.utc)},
+            {"name": "Access & Permissions", "is_archived": False, "created_at": datetime.now(timezone.utc)},
         ],
     )
 

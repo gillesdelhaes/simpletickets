@@ -392,7 +392,7 @@ export default function Queue() {
                       <td style={{ padding: '9px 16px', maxWidth: 300 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
                           {ticket.channel === 'slack' && (
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, opacity: 0.7 }} title="From Slack">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, opacity: 0.7 }}>
                               <path d="M14.5 10c-.83 0-1.5-.67-1.5-1.5v-5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5z" fill="#10B981"/>
                               <path d="M20.5 10H19V8.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" fill="#10B981"/>
                               <path d="M9.5 14c.83 0 1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5S8 21.33 8 20.5v-5c0-.83.67-1.5 1.5-1.5z" fill="#10B981"/>

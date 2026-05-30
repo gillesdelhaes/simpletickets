@@ -17,7 +17,6 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import Category, SLAPolicy, Ticket, TicketReply, User
 from app.models.enums import Channel, Priority, TicketStatus
-from app.services.notifications import notify_ticket_created
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ _STATUS_LABELS: dict[str, str] = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ── User lookup ────────────────────────────────────────────────────────────────
@@ -109,24 +108,6 @@ async def create_ticket_from_slack(
 
         await session.commit()
         await session.refresh(ticket)
-
-        # Fire-and-forget email notifications
-        if submitter_id is not None:
-            submitter = await session.get(User, submitter_id)
-            if submitter:
-                try:
-                    await notify_ticket_created(
-                        session=session,
-                        ticket_id=ticket.id,
-                        ticket_display_id=ticket.display_id,
-                        ticket_title=ticket.title,
-                        ticket_priority=ticket.priority.value,
-                        submitter_id=submitter_id,
-                        submitter_name=submitter.name,
-                        submitter_email=submitter.email,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception("Notification failed for Slack ticket %s", ticket.display_id)
 
         logger.info(
             "Created ticket %s from Slack (submitter_id=%s, channel=%s)",

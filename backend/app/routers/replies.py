@@ -19,7 +19,6 @@ from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Ticket, TicketHistory, TicketReply, User
 from app.models.enums import Role, TicketStatus
-from app.services.notifications import notify_reply_added
 from app.schemas.reply import ReplyCreate, ReplyRead
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,7 @@ _CLOSED_STATUSES = {TicketStatus.resolved, TicketStatus.closed}
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def _get_ticket_or_404(session: AsyncSession, ticket_id: int) -> Ticket:
@@ -178,18 +177,5 @@ async def create_reply(
             logger.exception(
                 "Failed to sync reply to Slack for ticket %s", ticket.display_id
             )
-
-    await notify_reply_added(
-        session=session,
-        ticket_id=ticket.id,
-        ticket_display_id=ticket.display_id,
-        ticket_title=ticket.title,
-        reply_body=body.body,
-        is_internal=is_internal,
-        author_id=current_user.id,
-        author_name=current_user.name,
-        submitter_id=ticket.submitter_id,
-        assignee_id=ticket.assignee_id,
-    )
 
     return _to_read(reply, current_user.name, current_user.avatar_url)

@@ -52,7 +52,7 @@ _UNSAFE_CHARS = re.compile(r"[^\w.\-]")
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _sanitize_filename(name: str) -> str:
