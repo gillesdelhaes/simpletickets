@@ -9,6 +9,7 @@ import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import Queue from './pages/Queue'
 import Portal from './pages/Portal'
+import TicketDetail from './pages/TicketDetail'
 
 // Placeholder — replaced when each chunk is built
 function Placeholder({ name }: { name: string }) {
@@ -41,7 +42,7 @@ export default function App() {
         <Route element={<ProtectedRoute roles={['end_user', 'technician', 'admin']} />}>
           <Route path="/portal" element={<Portal />} />
           <Route path="/tickets/new" element={<Placeholder name="New Ticket" />} />
-          <Route path="/tickets/:id" element={<Placeholder name="Ticket Detail" />} />
+          <Route path="/tickets/:id" element={<TicketDetail />} />
         </Route>
 
         {/* ── Protected: technician + admin ── */}
