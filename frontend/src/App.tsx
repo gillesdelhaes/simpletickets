@@ -6,6 +6,8 @@ import AuthCallback from './pages/AuthCallback'
 import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+import Dashboard from './pages/Dashboard'
+import Queue from './pages/Queue'
 
 // Placeholder — replaced when each chunk is built
 function Placeholder({ name }: { name: string }) {
@@ -43,8 +45,8 @@ export default function App() {
 
         {/* ── Protected: technician + admin ── */}
         <Route element={<ProtectedRoute roles={['technician', 'admin']} />}>
-          <Route path="/dashboard" element={<Placeholder name="Dashboard" />} />
-          <Route path="/queue" element={<Placeholder name="Ticket Queue" />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/queue" element={<Queue />} />
           <Route path="/queue/mine" element={<Placeholder name="My Queue" />} />
           <Route path="/search" element={<Placeholder name="Search" />} />
           <Route path="/reports" element={<Placeholder name="Reports" />} />
