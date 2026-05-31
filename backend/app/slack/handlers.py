@@ -22,6 +22,7 @@ from app.models import Category, Ticket
 from app.models.enums import Priority, TicketStatus
 from app.slack.service import (
     _download_slack_files,
+    build_home_view,
     create_ticket_from_slack,
     get_user_by_slack_id,
     handle_slack_thread_message,
@@ -126,6 +127,7 @@ def register_handlers(app: Any) -> None:
                 description=description,
                 priority=Priority.medium,
                 slack_submitter_name=submitter_name,
+                slack_submitter_id=author_slack_id or None,
                 slack_channel_id=channel_id,
                 slack_message_ts=message_ts,
             )
@@ -257,6 +259,7 @@ def register_handlers(app: Any) -> None:
                     description=description,
                     priority=Priority.medium,
                     slack_submitter_name=submitter_name,
+                    slack_submitter_id=slack_user_id or None,
                     slack_channel_id=channel_id,
                     slack_message_ts=message_ts,
                 )
@@ -311,6 +314,21 @@ def register_handlers(app: Any) -> None:
                 "handle_message: failed to sync thread reply ts=%s channel=%s",
                 message_ts, channel_id,
             )
+
+    # ── App Home ───────────────────────────────────────────────────────────────
+
+    @app.event("app_home_opened")
+    async def handle_app_home_opened(event: dict, client: Any) -> None:
+        """Render the App Home tab with the user's open tickets."""
+        slack_user_id: str = event.get("user", "")
+        tab: str = event.get("tab", "")
+        if tab != "home" or not slack_user_id:
+            return
+        try:
+            view = await build_home_view(slack_user_id, client)
+            await client.views_publish(user_id=slack_user_id, view=view)
+        except Exception:  # noqa: BLE001
+            logger.exception("app_home_opened: failed to publish home for %s", slack_user_id)
 
     # ── /ticket slash command ──────────────────────────────────────────────────
 
@@ -396,6 +414,78 @@ def register_handlers(app: Any) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("/ticket: failed to open modal for user %s", body.get("user_id"))
 
+    # ── App Home "Submit a ticket" button ─────────────────────────────────────
+
+    @app.action("open_ticket_modal")
+    async def handle_open_ticket_modal(ack: Any, body: dict, client: Any) -> None:
+        await ack()
+        category_options = await _fetch_categories()
+        # Reuse the same modal view defined in handle_ticket_command
+        view: dict = {
+            "type": "modal",
+            "callback_id": "ticket_modal",
+            "title": {"type": "plain_text", "text": "Submit a Ticket"},
+            "submit": {"type": "plain_text", "text": "Submit"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "input",
+                    "block_id": "title_block",
+                    "label": {"type": "plain_text", "text": "What can we help you with?"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "title_input",
+                        "placeholder": {"type": "plain_text", "text": "Brief summary of the issue"},
+                        "max_length": 200,
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "description_block",
+                    "label": {"type": "plain_text", "text": "Description"},
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "description_input",
+                        "multiline": True,
+                        "placeholder": {"type": "plain_text", "text": "Please describe the issue in detail…"},
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "priority_block",
+                    "label": {"type": "plain_text", "text": "Priority"},
+                    "element": {
+                        "type": "static_select",
+                        "action_id": "priority_select",
+                        "initial_option": {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                        "options": [
+                            {"text": {"type": "plain_text", "text": "Low"}, "value": "low"},
+                            {"text": {"type": "plain_text", "text": "Medium"}, "value": "medium"},
+                            {"text": {"type": "plain_text", "text": "High"}, "value": "high"},
+                            {"text": {"type": "plain_text", "text": "Critical"}, "value": "critical"},
+                        ],
+                    },
+                },
+            ],
+        }
+        if category_options:
+            view["blocks"].append({
+                "type": "input",
+                "block_id": "category_block",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Category (optional)"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "category_select",
+                    "placeholder": {"type": "plain_text", "text": "Select a category"},
+                    "options": category_options,
+                },
+            })
+        try:
+            await client.views_open(trigger_id=body["trigger_id"], view=view)
+        except Exception:  # noqa: BLE001
+            logger.exception("open_ticket_modal: failed to open modal for user %s", body.get("user", {}).get("id"))
+
     # ── Modal submission ───────────────────────────────────────────────────────
 
     @app.view("ticket_modal")
@@ -438,6 +528,7 @@ def register_handlers(app: Any) -> None:
                 priority=priority,
                 category_id=category_value,
                 slack_submitter_name=submitter_name,
+                slack_submitter_id=slack_user_id or None,
             )
         except Exception:  # noqa: BLE001
             logger.exception("ticket_modal: ticket creation failed")
@@ -474,3 +565,11 @@ def register_handlers(app: Any) -> None:
                             await session.commit()
             except Exception:  # noqa: BLE001
                 logger.exception("ticket_modal: failed to DM user %s", slack_user_id)
+
+        # Refresh App Home so the new ticket appears immediately
+        if slack_user_id:
+            try:
+                view = await build_home_view(slack_user_id, client)
+                await client.views_publish(user_id=slack_user_id, view=view)
+            except Exception:  # noqa: BLE001
+                pass  # non-critical

@@ -73,6 +73,7 @@ async def create_ticket_from_slack(
     category_id: Optional[int] = None,
     submitter_id: Optional[int] = None,
     slack_submitter_name: Optional[str] = None,
+    slack_submitter_id: Optional[str] = None,
     slack_channel_id: Optional[str] = None,
     slack_message_ts: Optional[str] = None,
 ) -> Ticket:
@@ -108,6 +109,7 @@ async def create_ticket_from_slack(
             category_id=category_id,
             submitter_id=submitter_id,
             slack_submitter_name=slack_submitter_name if not submitter_id else None,
+            slack_submitter_id=slack_submitter_id,
             sla_policy_id=sla_policy_id,
             sla_deadline=sla_deadline,
             slack_channel_id=slack_channel_id,
@@ -352,6 +354,117 @@ async def handle_slack_thread_message(
         # Download any attached files from the Slack message
         if files:
             await _download_slack_files(ticket.id, reply.id, files)
+
+
+# ── App Home ──────────────────────────────────────────────────────────────────
+
+_HOME_STATUS_EMOJI: dict[str, str] = {
+    "open": "🆕",
+    "in_progress": "🚀",
+    "pending_user": "⏳",
+    "resolved": "✅",
+    "closed": "🔒",
+}
+
+_HOME_PRIORITY_EMOJI: dict[str, str] = {
+    "low": "🔵",
+    "medium": "🟡",
+    "high": "🟠",
+    "critical": "🔴",
+}
+
+_OPEN_STATUSES = [TicketStatus.open, TicketStatus.in_progress, TicketStatus.pending_user]
+
+
+async def build_home_view(slack_user_id: str, client: Any) -> dict:
+    """
+    Build the Block Kit view for a user's App Home tab.
+    Shows their open tickets with a button to jump to each Slack thread.
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Ticket)
+            .where(
+                Ticket.slack_submitter_id == slack_user_id,
+                Ticket.status.in_(_OPEN_STATUSES),
+            )
+            .order_by(Ticket.created_at.desc())
+            .limit(20)
+        )
+        tickets = result.scalars().all()
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "🎫  My Support Tickets", "emoji": True},
+        },
+        {"type": "divider"},
+    ]
+
+    if not tickets:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "_You have no open tickets right now._\n\nUse the button below to submit a new request.",
+            },
+        })
+    else:
+        for ticket in tickets:
+            status_emoji = _HOME_STATUS_EMOJI.get(ticket.status.value, "•")
+            priority_emoji = _HOME_PRIORITY_EMOJI.get(ticket.priority.value, "•")
+
+            # Try to get a permalink to the Slack thread
+            view_button: dict | None = None
+            if ticket.slack_channel_id and ticket.slack_message_ts:
+                try:
+                    pl = await client.chat_getPermalink(
+                        channel=ticket.slack_channel_id,
+                        message_ts=ticket.slack_message_ts,
+                    )
+                    permalink: str | None = pl.get("permalink")
+                    if permalink:
+                        view_button = {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "View thread", "emoji": False},
+                            "url": permalink,
+                            "action_id": f"view_thread_{ticket.id}",
+                        }
+                except Exception:  # noqa: BLE001
+                    pass
+
+            section: dict = {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{ticket.display_id}* · {status_emoji} {ticket.status.value.replace('_', ' ').title()}"
+                        f"  {priority_emoji} {ticket.priority.value.capitalize()}\n"
+                        f"{ticket.title}"
+                    ),
+                },
+            }
+            if view_button:
+                section["accessory"] = view_button
+
+            blocks.append(section)
+            blocks.append({"type": "divider"})
+
+    blocks += [
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "➕  Submit a new ticket", "emoji": True},
+                    "style": "primary",
+                    "action_id": "open_ticket_modal",
+                }
+            ],
+        }
+    ]
+
+    return {"type": "home", "blocks": blocks}
 
 
 # ── Slack file helpers ─────────────────────────────────────────────────────────

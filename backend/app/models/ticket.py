@@ -43,6 +43,8 @@ class Ticket(SQLModel, table=True):
 
     # Unmatched Slack submitter — set when submitter_id is null
     slack_submitter_name: Optional[str] = Field(default=None)
+    # Slack user ID of whoever submitted the ticket via Slack (all creation paths)
+    slack_submitter_id: Optional[str] = Field(default=None, index=True)
 
     # SLA — policy snapshot at creation time; null = no SLA configured
     sla_policy_id: Optional[int] = Field(default=None, foreign_key="sla_policies.id")
