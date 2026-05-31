@@ -7,6 +7,7 @@ from app.config import settings, settings_manager
 from app.database import AsyncSessionLocal
 from app.slack.bot import start_slack, stop_slack
 from app.routers import (
+    activity,
     admin,
     app_config,
     attachments,
@@ -74,3 +75,4 @@ app.include_router(notifications.router,   prefix="/api")
 app.include_router(app_config.router,      prefix="/api")
 app.include_router(reports.router,         prefix="/api")
 app.include_router(slack_users.router,     prefix="/api")
+app.include_router(activity.router,        prefix="/api")
