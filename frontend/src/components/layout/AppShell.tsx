@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useAppConfig } from '../../hooks/useAppConfig'
 import { useUnreadReplies } from '../../hooks/useUnreadReplies'
 
 // ── Inline SVG icons (18×18, stroke-based) ────────────────────────────────────
@@ -152,6 +153,7 @@ const SIDEBAR_COLLAPSED_KEY = 'st_sidebar_collapsed'
 export default function AppShell({ title, children }: AppShellProps) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  useAppConfig() // loads timezone into module-level state
   const { data: unreadData } = useUnreadReplies()
   const myUnreadCount = unreadData?.my_unread_count ?? 0
   const myUnreadTickets = unreadData?.my_unread_tickets ?? []

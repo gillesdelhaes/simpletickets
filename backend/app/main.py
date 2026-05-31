@@ -8,6 +8,7 @@ from app.database import AsyncSessionLocal
 from app.slack.bot import start_slack, stop_slack
 from app.routers import (
     admin,
+    app_config,
     attachments,
     auth,
     categories,
@@ -72,3 +73,4 @@ app.include_router(search.router,          prefix="/api")
 app.include_router(sla.router,             prefix="/api")
 app.include_router(history.router,         prefix="/api")
 app.include_router(notifications.router,   prefix="/api")
+app.include_router(app_config.router,      prefix="/api")

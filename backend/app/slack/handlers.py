@@ -21,6 +21,7 @@ from app.database import AsyncSessionLocal
 from app.models import Category, Ticket
 from app.models.enums import Priority, TicketStatus
 from app.slack.service import (
+    _download_slack_files,
     create_ticket_from_slack,
     get_user_by_slack_id,
     handle_slack_thread_message,
@@ -105,6 +106,7 @@ def register_handlers(app: Any) -> None:
             original = messages[0]
             message_text: str = original.get("text", "") or ""
             author_slack_id: str = original.get("user", "")
+            original_files: list[dict] = original.get("files", [])
         except Exception:  # noqa: BLE001
             logger.exception("reaction_added: failed to fetch message")
             return
@@ -136,6 +138,13 @@ def register_handlers(app: Any) -> None:
             )
             return
 
+        # ── Download any files from the original message ───────────────────
+        if original_files:
+            try:
+                await _download_slack_files(ticket.id, None, original_files)
+            except Exception:  # noqa: BLE001
+                logger.exception("reaction_added: failed to download files for %s", ticket.display_id)
+
         # ── Post thread confirmation ───────────────────────────────────────
         try:
             await client.chat_postMessage(
@@ -158,7 +167,10 @@ def register_handlers(app: Any) -> None:
         4. Thread reply in a monitored channel → sync back to the web portal.
         """
         # Skip bot messages and system subtypes (message_changed, etc.)
-        if event.get("subtype") is not None:
+        # Allow "file_share" through — Slack uses this subtype when a message
+        # contains only file attachments with no text body.
+        subtype = event.get("subtype")
+        if subtype is not None and subtype != "file_share":
             return
         if event.get("bot_id"):
             return
@@ -169,6 +181,7 @@ def register_handlers(app: Any) -> None:
         channel_id: str = event.get("channel", "")
         message_ts: str = event.get("ts", "")
         thread_ts: str = event.get("thread_ts", "")
+        event_files: list[dict] = event.get("files", [])
 
         # Slack doesn't always populate channel_type on threaded DM replies,
         # so detect DM channels by ID prefix as a fallback.
@@ -176,7 +189,7 @@ def register_handlers(app: Any) -> None:
 
         # ── DM to bot ──────────────────────────────────────────────────────
         if is_dm:
-            if not text.strip():
+            if not text.strip() and not event_files:
                 return
 
             # Explicit thread reply → sync to whichever ticket owns that thread
@@ -189,6 +202,7 @@ def register_handlers(app: Any) -> None:
                         slack_user_id=slack_user_id,
                         text=text,
                         client=client,
+                        files=event_files,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
@@ -221,6 +235,7 @@ def register_handlers(app: Any) -> None:
                         slack_user_id=slack_user_id,
                         text=text,
                         client=client,
+                        files=event_files,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
@@ -231,8 +246,9 @@ def register_handlers(app: Any) -> None:
 
             submitter_name = await _slack_display_name(client, slack_user_id) if slack_user_id else "Slack user"
 
-            first_line = text.split("\n")[0].strip()
-            title = first_line[:200] if first_line else "Ticket from DM"
+            first_line = text.split("\n")[0].strip() if text.strip() else ""
+            file_hint = f"{len(event_files)} attachment(s)" if event_files and not first_line else ""
+            title = first_line[:200] if first_line else (file_hint or "Ticket from DM")
             description = text.strip() or title
 
             try:
@@ -254,6 +270,13 @@ def register_handlers(app: Any) -> None:
                 except Exception:  # noqa: BLE001
                     pass
                 return
+
+            # Download any files attached to the initial DM
+            if event_files:
+                try:
+                    await _download_slack_files(ticket.id, None, event_files)
+                except Exception:  # noqa: BLE001
+                    logger.exception("handle_message(DM): failed to download files for %s", ticket.display_id)
 
             try:
                 await client.chat_postMessage(
@@ -281,6 +304,7 @@ def register_handlers(app: Any) -> None:
                 slack_user_id=slack_user_id,
                 text=text,
                 client=client,
+                files=event_files,
             )
         except Exception:  # noqa: BLE001
             logger.exception(

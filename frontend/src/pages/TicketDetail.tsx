@@ -2,9 +2,11 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import AppShell from '../components/layout/AppShell'
+import AuthImage from '../components/AuthImage'
 import SLABadge from '../components/tickets/SLABadge'
 import { useTicket } from '../hooks/useTicket'
 import { useReplies, useAddReply, type ReplyRead } from '../hooks/useReplies'
+import { useAttachments, type AttachmentRead, isImage, formatBytes } from '../hooks/useAttachments'
 import { useCategories } from '../hooks/useCategories'
 import { useAgents } from '../hooks/useAgents'
 import { useAuth } from '../contexts/AuthContext'
@@ -74,64 +76,109 @@ function Avatar({ name, size = 32 }: AvatarProps) {
   )
 }
 
+// ── Attachment list ────────────────────────────────────────────────────────────
+
+function AttachmentList({ attachments }: { attachments: AttachmentRead[] }) {
+  const [lightbox, setLightbox] = useState<number | null>(null)
+  if (attachments.length === 0) return null
+
+  return (
+    <>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+        {attachments.map(att => (
+          isImage(att.mime_type) ? (
+            <AuthImage
+              key={att.id}
+              attachmentId={att.id}
+              alt={att.filename}
+              onClick={() => setLightbox(att.id)}
+            />
+          ) : (
+            <button
+              key={att.id}
+              type="button"
+              onClick={() => {
+                api.get(`/attachments/${att.id}/download`, { responseType: 'blob' }).then(r => {
+                  const url = URL.createObjectURL(r.data)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = att.filename
+                  a.click()
+                  URL.revokeObjectURL(url)
+                })
+              }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', borderRadius: 6,
+                border: '1px solid #E5E5E5', background: '#FAFAFA',
+                fontSize: 12, color: '#262626', cursor: 'pointer',
+                transition: 'background 0.12s',
+              }}
+              onMouseOver={e => (e.currentTarget.style.background = '#F2F2F2')}
+              onMouseOut={e => (e.currentTarget.style.background = '#FAFAFA')}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6L9 2z"/>
+                <path d="M9 2v4h4"/>
+              </svg>
+              <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {att.filename}
+              </span>
+              <span style={{ color: '#A3A3A3', flexShrink: 0 }}>{formatBytes(att.size_bytes)}</span>
+            </button>
+          )
+        ))}
+      </div>
+
+      {/* Lightbox */}
+      {lightbox !== null && (
+        <div
+          onClick={() => setLightbox(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+            zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'zoom-out',
+          }}
+        >
+          <AuthImage
+            attachmentId={lightbox}
+            style={{ maxWidth: '90vw', maxHeight: '90vh', border: 'none', borderRadius: 8 }}
+          />
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── Reply bubble ───────────────────────────────────────────────────────────────
 
 interface ReplyBubbleProps {
   reply: ReplyRead
   isOwn: boolean
   isTech: boolean
+  attachments: AttachmentRead[]
 }
 
-function ReplyBubble({ reply, isOwn, isTech }: ReplyBubbleProps) {
+function ReplyBubble({ reply, isOwn, isTech, attachments }: ReplyBubbleProps) {
   const isInternal = reply.is_internal
 
   if (isInternal) {
-    // Amber internal note — only shown to technicians
     return (
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          animation: 'fadeUp 0.2s ease',
-        }}
-      >
+      <div style={{ display: 'flex', gap: 10, animation: 'fadeUp 0.2s ease' }}>
         <Avatar name={reply.author_name} size={30} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
               {reply.author_name ?? 'Unknown'}
             </span>
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: '#92400E',
-                background: '#FEF3C7',
-                border: '1px solid #FDE68A',
-                borderRadius: 4,
-                padding: '1px 6px',
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-              }}
-            >
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 4, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               Internal
             </span>
             <span style={{ fontSize: 11, color: '#A3A3A3' }}>{timeAgo(reply.created_at)}</span>
           </div>
-          <div
-            style={{
-              borderLeft: '3px solid #F59E0B',
-              background: '#FFFBEB',
-              borderRadius: '0 8px 8px 0',
-              padding: '10px 14px',
-              fontSize: 14,
-              color: '#451A03',
-              lineHeight: 1.6,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
+          <div style={{ borderLeft: '3px solid #F59E0B', background: '#FFFBEB', borderRadius: '0 8px 8px 0', padding: '10px 14px', fontSize: 14, color: '#451A03', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {reply.body}
+            <AttachmentList attachments={attachments} />
           </div>
         </div>
       </div>
@@ -139,43 +186,16 @@ function ReplyBubble({ reply, isOwn, isTech }: ReplyBubbleProps) {
   }
 
   if (isOwn) {
-    // Right-aligned: own messages (end-user sees their own replies right)
     return (
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          justifyContent: 'flex-end',
-          animation: 'fadeUp 0.2s ease',
-        }}
-      >
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', animation: 'fadeUp 0.2s ease' }}>
         <div style={{ maxWidth: '72%' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              marginBottom: 6,
-              justifyContent: 'flex-end',
-            }}
-          >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, justifyContent: 'flex-end' }}>
             <span style={{ fontSize: 11, color: '#A3A3A3' }}>{timeAgo(reply.created_at)}</span>
             <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>You</span>
           </div>
-          <div
-            style={{
-              background: 'linear-gradient(135deg, rgba(255,71,19,0.08), rgba(173,17,100,0.06))',
-              border: '1px solid rgba(255,71,19,0.15)',
-              borderRadius: '12px 4px 12px 12px',
-              padding: '10px 14px',
-              fontSize: 14,
-              color: '#262626',
-              lineHeight: 1.6,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
+          <div style={{ background: 'linear-gradient(135deg, rgba(255,71,19,0.08), rgba(173,17,100,0.06))', border: '1px solid rgba(255,71,19,0.15)', borderRadius: '12px 4px 12px 12px', padding: '10px 14px', fontSize: 14, color: '#262626', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {reply.body}
+            <AttachmentList attachments={attachments} />
           </div>
         </div>
         <Avatar name={reply.author_name} size={30} />
@@ -183,15 +203,8 @@ function ReplyBubble({ reply, isOwn, isTech }: ReplyBubbleProps) {
     )
   }
 
-  // Left-aligned: support / other
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 10,
-        animation: 'fadeUp 0.2s ease',
-      }}
-    >
+    <div style={{ display: 'flex', gap: 10, animation: 'fadeUp 0.2s ease' }}>
       <Avatar name={reply.author_name} size={30} />
       <div style={{ maxWidth: '72%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -199,36 +212,15 @@ function ReplyBubble({ reply, isOwn, isTech }: ReplyBubbleProps) {
             {reply.author_name ?? 'Support'}
           </span>
           {isTech && (
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                color: '#737373',
-                background: '#F2F2F2',
-                borderRadius: 4,
-                padding: '1px 5px',
-              }}
-            >
+            <span style={{ fontSize: 10, fontWeight: 600, color: '#737373', background: '#F2F2F2', borderRadius: 4, padding: '1px 5px' }}>
               Team
             </span>
           )}
           <span style={{ fontSize: 11, color: '#A3A3A3' }}>{timeAgo(reply.created_at)}</span>
         </div>
-        <div
-          style={{
-            background: '#fff',
-            border: '1px solid #E5E5E5',
-            borderRadius: '4px 12px 12px 12px',
-            padding: '10px 14px',
-            fontSize: 14,
-            color: '#262626',
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-          }}
-        >
+        <div style={{ background: '#fff', border: '1px solid #E5E5E5', borderRadius: '4px 12px 12px 12px', padding: '10px 14px', fontSize: 14, color: '#262626', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           {reply.body}
+          <AttachmentList attachments={attachments} />
         </div>
       </div>
     </div>
@@ -246,20 +238,53 @@ interface ComposerProps {
 function Composer({ ticketId, isTech, disabled }: ComposerProps) {
   const [body, setBody] = useState('')
   const [mode, setMode] = useState<'reply' | 'internal'>('reply')
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const addReply = useAddReply(ticketId)
+  const queryClient = useQueryClient()
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!body.trim() || addReply.isPending) return
-    addReply.mutate(
-      { body: body.trim(), is_internal: mode === 'internal' },
-      { onSuccess: () => setBody('') }
-    )
+    if (!body.trim() || uploading || addReply.isPending) return
+    try {
+      setUploading(true)
+      const reply = await addReply.mutateAsync({ body: body.trim(), is_internal: mode === 'internal' })
+      setBody('')
+      if (pendingFiles.length > 0) {
+        for (const file of pendingFiles) {
+          const form = new FormData()
+          form.append('file', file)
+          await api.post(
+            `/tickets/${ticketId}/attachments?reply_id=${reply.id}`,
+            form,
+            { headers: { 'Content-Type': 'multipart/form-data' } },
+          )
+        }
+        setPendingFiles([])
+        queryClient.invalidateQueries({ queryKey: ['attachments', ticketId] })
+      }
+    } catch {
+      // error shown by addReply.isError
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    setPendingFiles(prev => [...prev, ...files])
+    e.target.value = ''
+  }
+
+  function removeFile(idx: number) {
+    setPendingFiles(prev => prev.filter((_, i) => i !== idx))
   }
 
   const isInternal = mode === 'internal'
-  const canSubmit = body.trim().length > 0 && !addReply.isPending && !disabled
+  const isBusy = addReply.isPending || uploading
+  const canSubmit = body.trim().length > 0 && !isBusy && !disabled
 
   return (
     <form onSubmit={handleSubmit}>
@@ -338,49 +363,85 @@ function Composer({ ticketId, isTech, disabled }: ComposerProps) {
         />
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          marginTop: 10,
-        }}
-      >
+      {/* File previews */}
+      {pendingFiles.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {pendingFiles.map((file, idx) => (
+            <div key={idx} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '4px 8px 4px 10px', borderRadius: 6,
+              background: '#F2F2F2', border: '1px solid #E5E5E5',
+              fontSize: 12, color: '#262626', maxWidth: 220,
+            }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {file.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeFile(idx)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#A3A3A3', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <path d="M2 2l8 8M10 2l-8 8"/>
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+        {/* File attach button */}
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx"
+            onChange={handleFileChange}
+            style={{ display: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+            title="Attach files"
+            style={{
+              background: 'none', border: '1px solid #E5E5E5', borderRadius: 7,
+              cursor: disabled ? 'not-allowed' : 'pointer', padding: '5px 8px',
+              color: '#737373', display: 'flex', alignItems: 'center', gap: 5,
+              fontSize: 12, transition: 'background 0.12s, color 0.12s',
+            }}
+            onMouseOver={e => { if (!disabled) { e.currentTarget.style.background = '#F2F2F2'; e.currentTarget.style.color = '#262626' } }}
+            onMouseOut={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#737373' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13.5 8.5v3a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-3"/>
+              <path d="M8 1v8M5.5 3.5L8 1l2.5 2.5"/>
+            </svg>
+            Attach
+          </button>
+        </div>
+
         <button
           type="submit"
           disabled={!canSubmit}
           style={{
-            padding: '9px 22px',
-            borderRadius: 8,
-            border: 'none',
+            padding: '9px 22px', borderRadius: 8, border: 'none',
             background: canSubmit
-              ? isInternal
-                ? 'linear-gradient(135deg, #F59E0B, #D97706)'
-                : 'linear-gradient(135deg, #FF4713, #AD1164)'
+              ? isInternal ? 'linear-gradient(135deg, #F59E0B, #D97706)' : 'linear-gradient(135deg, #FF4713, #AD1164)'
               : '#E5E5E5',
             color: canSubmit ? '#fff' : '#A3A3A3',
-            fontSize: 13,
-            fontWeight: 600,
+            fontSize: 13, fontWeight: 600,
             cursor: canSubmit ? 'pointer' : 'not-allowed',
             transition: 'opacity 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
+            display: 'flex', alignItems: 'center', gap: 7,
           }}
           onMouseEnter={e => { if (canSubmit) e.currentTarget.style.opacity = '0.9' }}
           onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}
         >
-          {addReply.isPending && (
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: '50%',
-                border: '2px solid rgba(255,255,255,0.35)',
-                borderTopColor: '#fff',
-                display: 'inline-block',
-                animation: 'spin 0.7s linear infinite',
-              }}
-            />
+          {isBusy && (
+            <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.35)', borderTopColor: '#fff', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
           )}
           {isInternal ? 'Add Note' : 'Send Reply'}
         </button>
@@ -723,7 +784,15 @@ interface ThreadColumnProps {
 
 function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
   const { data: replies, isLoading } = useReplies(ticket.id)
+  const { data: allAttachments } = useAttachments(ticket.id)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // Group attachments by reply_id; null = ticket-level (initial message)
+  const attachmentsByReply = (allAttachments ?? []).reduce<Record<string, AttachmentRead[]>>((acc, att) => {
+    const key = att.reply_id == null ? '__ticket__' : String(att.reply_id)
+    ;(acc[key] ??= []).push(att)
+    return acc
+  }, {})
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -771,6 +840,7 @@ function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
         >
           {ticket.description}
         </p>
+        <AttachmentList attachments={attachmentsByReply['__ticket__'] ?? []} />
       </div>
 
       {/* Reply thread */}
@@ -794,6 +864,7 @@ function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
               reply={reply}
               isOwn={reply.author_id === currentUserId}
               isTech={isTech}
+              attachments={attachmentsByReply[String(reply.id)] ?? []}
             />
           ))}
           <div ref={bottomRef} />

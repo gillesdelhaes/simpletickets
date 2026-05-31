@@ -19,4 +19,5 @@ class TicketAttachment(SQLModel, table=True):
     storage_path: str  # Relative path under STORAGE_LOCAL_PATH
     mime_type: str
     size_bytes: int
+    slack_file_id: Optional[str] = Field(default=None)  # Slack file ID for dedup
     created_at: datetime = Field(default_factory=utcnow)

@@ -32,6 +32,7 @@ _WRITABLE_KEYS = {
     "slack_signing_secret",
     "slack_trigger_emoji",
     "slack_two_way_sync",
+    "timezone",
 }
 
 _SLACK_KEYS = {

@@ -143,6 +143,7 @@ def upgrade() -> None:
         sa.Column("storage_path", sqlmodel.AutoString(), nullable=False),
         sa.Column("mime_type", sqlmodel.AutoString(), nullable=False),
         sa.Column("size_bytes", sa.Integer(), nullable=False),
+        sa.Column("slack_file_id", sqlmodel.AutoString(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["reply_id"], ["ticket_replies.id"]),
         sa.ForeignKeyConstraint(["ticket_id"], ["tickets.id"]),
@@ -249,6 +250,7 @@ def upgrade() -> None:
             {"key": "slack_signing_secret", "value": None,     "is_secret": True,  "group_name": "slack", "updated_at": _now},
             {"key": "slack_trigger_emoji",  "value": "ticket", "is_secret": False, "group_name": "slack", "updated_at": _now},
             {"key": "slack_two_way_sync",   "value": "true",   "is_secret": False, "group_name": "slack", "updated_at": _now},
+            {"key": "timezone",             "value": "UTC",    "is_secret": False, "group_name": "app",   "updated_at": _now},
         ],
     )
 

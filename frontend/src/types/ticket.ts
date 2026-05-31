@@ -110,8 +110,30 @@ export function parseSLABar(ticket: TicketRead): {
   return { pct, label: formatDuration(remaining), color, breached: false }
 }
 
+let _timezone = 'UTC'
+
+export function setTimezone(tz: string) {
+  _timezone = tz
+}
+
+export function formatAbsDate(dateStr: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: _timezone,
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(dateStr + 'Z'))
+  } catch {
+    return new Date(dateStr).toLocaleString()
+  }
+}
+
 export function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
+  const date = new Date(dateStr + 'Z')
+  const diff = Date.now() - date.getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'just now'
   if (mins < 60) return `${mins}m ago`
@@ -119,5 +141,14 @@ export function timeAgo(dateStr: string): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(dateStr).toLocaleDateString()
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: _timezone,
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(date)
+  } catch {
+    return date.toLocaleDateString()
+  }
 }

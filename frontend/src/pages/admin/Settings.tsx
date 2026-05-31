@@ -12,13 +12,56 @@ interface SettingRead {
 
 const GROUPS: { name: string; label: string; keys: string[] }[] = [
   {
+    name: 'general',
+    label: 'General',
+    keys: ['timezone'],
+  },
+  {
     name: 'slack',
     label: 'Slack Integration',
     keys: ['slack_bot_token', 'slack_app_token', 'slack_signing_secret', 'slack_trigger_emoji', 'slack_two_way_sync'],
   },
 ]
 
-const KEY_META: Record<string, { label: string; hint: string; placeholder?: string }> = {
+// Common IANA timezones grouped by region
+const TIMEZONES = [
+  { label: 'UTC', value: 'UTC' },
+  // Europe
+  { label: 'Europe/London', value: 'Europe/London' },
+  { label: 'Europe/Paris', value: 'Europe/Paris' },
+  { label: 'Europe/Brussels', value: 'Europe/Brussels' },
+  { label: 'Europe/Amsterdam', value: 'Europe/Amsterdam' },
+  { label: 'Europe/Berlin', value: 'Europe/Berlin' },
+  { label: 'Europe/Rome', value: 'Europe/Rome' },
+  { label: 'Europe/Madrid', value: 'Europe/Madrid' },
+  { label: 'Europe/Zurich', value: 'Europe/Zurich' },
+  { label: 'Europe/Stockholm', value: 'Europe/Stockholm' },
+  { label: 'Europe/Helsinki', value: 'Europe/Helsinki' },
+  { label: 'Europe/Warsaw', value: 'Europe/Warsaw' },
+  { label: 'Europe/Bucharest', value: 'Europe/Bucharest' },
+  { label: 'Europe/Moscow', value: 'Europe/Moscow' },
+  // Americas
+  { label: 'America/New_York', value: 'America/New_York' },
+  { label: 'America/Chicago', value: 'America/Chicago' },
+  { label: 'America/Denver', value: 'America/Denver' },
+  { label: 'America/Los_Angeles', value: 'America/Los_Angeles' },
+  { label: 'America/Toronto', value: 'America/Toronto' },
+  { label: 'America/Vancouver', value: 'America/Vancouver' },
+  { label: 'America/Mexico_City', value: 'America/Mexico_City' },
+  { label: 'America/Sao_Paulo', value: 'America/Sao_Paulo' },
+  // Asia / Pacific
+  { label: 'Asia/Dubai', value: 'Asia/Dubai' },
+  { label: 'Asia/Kolkata', value: 'Asia/Kolkata' },
+  { label: 'Asia/Singapore', value: 'Asia/Singapore' },
+  { label: 'Asia/Tokyo', value: 'Asia/Tokyo' },
+  { label: 'Asia/Shanghai', value: 'Asia/Shanghai' },
+  { label: 'Asia/Seoul', value: 'Asia/Seoul' },
+  { label: 'Australia/Sydney', value: 'Australia/Sydney' },
+  { label: 'Pacific/Auckland', value: 'Pacific/Auckland' },
+]
+
+const KEY_META: Record<string, { label: string; hint: string; placeholder?: string; type?: string }> = {
+  timezone:             { label: 'Timezone', hint: 'All timestamps are displayed in this timezone', type: 'timezone' },
   slack_bot_token:      { label: 'Bot Token', hint: 'Starts with xoxb-', placeholder: 'xoxb-…' },
   slack_app_token:      { label: 'App-Level Token', hint: 'Socket Mode — starts with xapp-', placeholder: 'xapp-…' },
   slack_signing_secret: { label: 'Signing Secret', hint: 'From Basic Information', placeholder: '••••••••' },
@@ -146,6 +189,7 @@ export default function Settings() {
               {group.keys.map((key, i) => {
                 const meta = KEY_META[key]
                 const row = settingMap[key]
+                const isTimezone = meta?.type === 'timezone'
                 const isToggle = key === 'slack_two_way_sync'
                 const isEditing = editing[key] || false
                 const val = getValue(key)
@@ -170,7 +214,24 @@ export default function Settings() {
 
                     {/* Value / input */}
                     <div>
-                      {isToggle ? (
+                      {isTimezone ? (
+                        <select
+                          value={val || 'UTC'}
+                          onChange={e => handleEdit(key, e.target.value)}
+                          style={{
+                            width: '100%', height: 34, borderRadius: 8,
+                            border: key in edits ? '1px solid #FF4713' : '1px solid #E5E5E5',
+                            background: key in edits ? '#FFF9F7' : '#FAFAFA',
+                            padding: '0 10px', fontSize: 13, color: '#0A0A0A', outline: 'none',
+                            boxShadow: key in edits ? '0 0 0 3px rgba(255,71,19,0.08)' : 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {TIMEZONES.map(tz => (
+                            <option key={tz.value} value={tz.value}>{tz.label}</option>
+                          ))}
+                        </select>
+                      ) : isToggle ? (
                         <div
                           onClick={() => handleEdit(key, val === 'false' ? 'true' : 'false')}
                           style={{

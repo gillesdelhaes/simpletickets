@@ -7,16 +7,22 @@ Called by Slack handlers and HTTP routers — bypasses HTTP, writes directly to 
 from __future__ import annotations
 
 import logging
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
+import aiofiles
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings_manager
+from app.config import settings, settings_manager
 from app.database import AsyncSessionLocal
-from app.models import Category, SLAPolicy, Ticket, TicketReply, User
+from app.models import Category, SLAPolicy, Ticket, TicketHistory, TicketReply, User
 from app.models.enums import Priority, TicketStatus
+from app.models.ticket_attachment import TicketAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +247,7 @@ async def handle_slack_thread_message(
     slack_user_id: str,
     text: str,
     client: Any,
+    files: Optional[list[dict]] = None,
 ) -> None:
     """
     Sync an inbound Slack thread reply to SimplyTickets as a public reply.
@@ -299,6 +306,30 @@ async def handle_slack_thread_message(
                     "handle_slack_thread_message: user lookup failed for %s", slack_user_id
                 )
 
+        now = _utcnow()
+
+        # Re-open resolved/closed tickets when the user replies from Slack
+        _CLOSED_STATUSES = {TicketStatus.resolved, TicketStatus.closed}
+        if ticket.status in _CLOSED_STATUSES:
+            old_status = ticket.status
+            ticket.status = TicketStatus.in_progress
+            ticket.resolved_at = None
+            ticket.updated_at = now
+            session.add(
+                TicketHistory(
+                    ticket_id=ticket.id,
+                    actor_id=None,
+                    field_changed="status",
+                    old_value=old_status.value,
+                    new_value=TicketStatus.in_progress.value,
+                    created_at=now,
+                )
+            )
+            logger.info(
+                "Re-opened ticket %s (was %s) due to Slack reply from %s",
+                ticket.display_id, old_status.value, author_name_fallback,
+            )
+
         reply = TicketReply(
             ticket_id=ticket.id,
             author_id=author_id,
@@ -306,7 +337,7 @@ async def handle_slack_thread_message(
             is_internal=False,
             slack_ts=message_ts,
             slack_author_name=author_name_fallback if author_id is None else None,
-            created_at=_utcnow(),
+            created_at=now,
         )
         session.add(reply)
         await session.commit()
@@ -317,3 +348,172 @@ async def handle_slack_thread_message(
             ticket.display_id,
             author_name_fallback if author_id is None else f"id={author_id}",
         )
+
+        # Download any attached files from the Slack message
+        if files:
+            await _download_slack_files(ticket.id, reply.id, files)
+
+
+# ── Slack file helpers ─────────────────────────────────────────────────────────
+
+_UNSAFE_CHARS = re.compile(r"[^\w.\-]")
+
+_ALLOWED_IMAGE_PREFIXES = ("image/",)
+_ALLOWED_MIME_EXACT = {
+    "application/pdf", "text/plain", "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def _allowed_mime(mime: str) -> bool:
+    return any(mime.startswith(p) for p in _ALLOWED_IMAGE_PREFIXES) or mime in _ALLOWED_MIME_EXACT
+
+
+async def _download_slack_files(
+    ticket_id: int,
+    reply_id: Optional[int],
+    files: list[dict],
+) -> None:
+    """Download Slack file attachments and persist them as TicketAttachment records."""
+    bot_token = settings_manager.slack_bot_token
+    if not bot_token:
+        return
+
+    async with AsyncSessionLocal() as session:
+        for file_info in files:
+            slack_file_id = file_info.get("id")
+            if not slack_file_id:
+                continue
+
+            # Dedup: skip if already downloaded for this ticket
+            existing = await session.execute(
+                select(TicketAttachment).where(
+                    TicketAttachment.slack_file_id == slack_file_id,
+                    TicketAttachment.ticket_id == ticket_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            url = file_info.get("url_private_download") or file_info.get("url_private")
+            if not url:
+                continue
+
+            filename = file_info.get("name", "attachment")
+            mimetype = file_info.get("mimetype", "application/octet-stream")
+            size = file_info.get("size", 0)
+
+            if size > 10 * 1024 * 1024:
+                logger.warning("Skipping oversized Slack file %s (%d bytes)", slack_file_id, size)
+                continue
+
+            if not _allowed_mime(mimetype):
+                logger.debug("Skipping disallowed MIME %s for Slack file %s", mimetype, slack_file_id)
+                continue
+
+            try:
+                async with httpx.AsyncClient(timeout=30) as http:
+                    resp = await http.get(
+                        url,
+                        headers={"Authorization": f"Bearer {bot_token}"},
+                        follow_redirects=True,
+                    )
+                    resp.raise_for_status()
+                    content = resp.content
+            except Exception:
+                logger.exception("Failed to download Slack file %s", slack_file_id)
+                continue
+
+            safe_name = _UNSAFE_CHARS.sub("_", Path(filename).name)[:200] or "file"
+            unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+            storage_dir = Path(settings.storage_local_path) / str(ticket_id)
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            abs_path = storage_dir / unique_name
+
+            try:
+                async with aiofiles.open(abs_path, "wb") as f:
+                    await f.write(content)
+            except Exception:
+                logger.exception("Failed to write Slack file %s to disk", slack_file_id)
+                continue
+
+            session.add(TicketAttachment(
+                ticket_id=ticket_id,
+                reply_id=reply_id,
+                filename=filename,
+                storage_path=str(Path(str(ticket_id)) / unique_name),
+                mime_type=mimetype,
+                size_bytes=len(content),
+                slack_file_id=slack_file_id,
+                created_at=_utcnow(),
+            ))
+
+        await session.commit()
+    logger.info("Downloaded %d Slack file(s) for ticket %d", len(files), ticket_id)
+
+
+async def upload_attachments_to_slack(
+    ticket: Ticket,
+    reply_id: int,
+) -> None:
+    """
+    Upload web attachments linked to a reply to the originating Slack thread.
+    Uses the files_upload_v2 (getUploadURLExternal) flow.
+    Silently no-ops if Slack is not configured / no thread / no attachments.
+    """
+    if not settings_manager.slack_two_way_sync:
+        return
+    if not (ticket.slack_channel_id and ticket.slack_message_ts):
+        return
+
+    from app.slack.bot import get_slack_client
+    client = get_slack_client()
+    if client is None:
+        return
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(TicketAttachment).where(
+                TicketAttachment.ticket_id == ticket.id,
+                TicketAttachment.reply_id == reply_id,
+                TicketAttachment.slack_file_id.is_(None),  # not from Slack
+            )
+        )
+        attachments = result.scalars().all()
+
+    for att in attachments:
+        abs_path = Path(settings.storage_local_path) / att.storage_path
+        if not abs_path.exists():
+            continue
+        try:
+            content = abs_path.read_bytes()
+
+            # Step 1: get upload URL
+            upload_resp = await client.files_getUploadURLExternal(
+                filename=att.filename,
+                length=len(content),
+            )
+            upload_url: str = upload_resp["upload_url"]
+            file_id: str = upload_resp["file_id"]
+
+            # Step 2: upload content
+            async with httpx.AsyncClient(timeout=60) as http:
+                await http.post(
+                    upload_url,
+                    content=content,
+                    headers={"Content-Type": att.mime_type},
+                )
+
+            # Step 3: complete and share to thread
+            await client.files_completeUploadExternal(
+                files=[{"id": file_id, "title": att.filename}],
+                channel_id=ticket.slack_channel_id,
+                thread_ts=ticket.slack_message_ts,
+            )
+
+            logger.debug("Uploaded attachment %d (%s) to Slack thread", att.id, att.filename)
+        except Exception:
+            logger.exception("Failed to upload attachment %d to Slack", att.id)
