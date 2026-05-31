@@ -19,7 +19,7 @@ export default function SetupStepWelcome({ onNext }: { onNext: () => void }) {
         fontSize: 36, fontWeight: 700, color: '#fff',
         letterSpacing: '-0.03em', marginBottom: 16, lineHeight: 1.2,
       }}>
-        Welcome to SimplyTickets
+        Welcome to SimpleTickets
       </h1>
       <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: 1.7, marginBottom: 48, maxWidth: 420, margin: '0 auto 48px' }}>
         Your Slack-native IT ticketing system. We'll get you set up in about 2 minutes — just a few things to configure.

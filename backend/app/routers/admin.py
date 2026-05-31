@@ -305,7 +305,7 @@ async def link_ticket_user(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """
-    Link an unmatched Slack ticket to an existing SimplyTickets user.
+    Link an unmatched Slack ticket to an existing SimpleTickets user.
     Sets ticket.submitter_id and clears slack_submitter_name. Admin only.
     """
     ticket = await session.get(Ticket, ticket_id)

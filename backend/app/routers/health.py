@@ -28,7 +28,7 @@ async def health_check() -> JSONResponse:
     payload = {
         "status": "ok" if db_ok else "degraded",
         "db": "ok" if db_ok else "unreachable",
-        "service": "simplytickets-api",
+        "service": "simpletickets-api",
     }
     return JSONResponse(
         content=payload,

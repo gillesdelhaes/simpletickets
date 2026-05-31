@@ -169,14 +169,14 @@ export default function SlackSetup() {
         {/* Intro */}
         <div style={{ marginBottom: 28 }}>
           <p style={{ fontSize: 14, color: 'rgba(10,10,10,0.6)', lineHeight: 1.7, margin: 0 }}>
-            SimplyTickets uses a <strong>private Slack app</strong> installed in your workspace.
+            SimpleTickets uses a <strong>private Slack app</strong> installed in your workspace.
             Each deployment needs its own app. Follow the steps below to create it and get the tokens required in Settings.
           </p>
         </div>
 
         <Step number={1} title="Create a new Slack app">
           <p style={p}>Go to <strong style={{ color: 'rgba(255,255,255,0.8)' }}>api.slack.com/apps</strong> and click <strong style={{ color: 'rgba(255,255,255,0.8)' }}>Create New App → From scratch</strong>.</p>
-          <p style={p}>Give it a name (e.g. <em>SimplyTickets</em>) and select your workspace.</p>
+          <p style={p}>Give it a name (e.g. <em>SimpleTickets</em>) and select your workspace.</p>
         </Step>
 
         <Step number={2} title="Enable Socket Mode">
@@ -254,7 +254,7 @@ export default function SlackSetup() {
           <Callout>Whenever you add new OAuth scopes, you must <strong>reinstall the app</strong> here to get a fresh token with the updated permissions.</Callout>
         </Step>
 
-        <Step number={9} title="Enter your tokens in SimplyTickets Settings">
+        <Step number={9} title="Enter your tokens in SimpleTickets Settings">
           <p style={p}>Go to <strong style={{ color: 'rgba(255,255,255,0.8)' }}>Admin → Settings → Slack</strong> and fill in:</p>
           <div style={{ background: '#0A0A0A', borderRadius: 8, border: '1px solid rgba(255,255,255,0.07)', marginTop: 10, overflow: 'hidden' }}>
             <ScopeRow name="Bot Token" description="xoxb-… from Step 8" />

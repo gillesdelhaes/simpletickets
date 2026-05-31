@@ -19,7 +19,7 @@ import sys
 
 db_url = os.environ.get(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@db:5432/simplytickets",
+    "postgresql+asyncpg://postgres:postgres@db:5432/simpletickets",
 )
 # psycopg2 needs the sync driver URL
 sync_url = db_url.replace("+asyncpg", "").replace("postgresql+psycopg2", "postgresql")

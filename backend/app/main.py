@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     # Warm the settings cache from DB before serving any request
     async with AsyncSessionLocal() as session:
         await settings_manager.warm(session)
+        await settings_manager.ensure_jwt_secret(session)
 
     start_scheduler()
 
@@ -44,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="SimplyTickets API",
+    title="SimpleTickets API",
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",

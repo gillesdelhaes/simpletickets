@@ -1,6 +1,6 @@
 """
 Internal service for creating tickets from Slack events and syncing replies
-between SimplyTickets and Slack threads.
+between SimpleTickets and Slack threads.
 
 Called by Slack handlers and HTTP routers — bypasses HTTP, writes directly to DB.
 """
@@ -52,7 +52,7 @@ def _utcnow() -> datetime:
 
 
 async def get_user_by_slack_id(session: AsyncSession, slack_user_id: str) -> Optional[User]:
-    """Find an active SimplyTickets (technician/admin) user by their Slack user ID."""
+    """Find an active SimpleTickets (technician/admin) user by their Slack user ID."""
     result = await session.execute(
         select(User).where(
             User.slack_user_id == slack_user_id,
@@ -252,7 +252,7 @@ async def handle_slack_thread_message(
     files: Optional[list[dict]] = None,
 ) -> None:
     """
-    Sync an inbound Slack thread reply to SimplyTickets as a public reply.
+    Sync an inbound Slack thread reply to SimpleTickets as a public reply.
 
     Called from the Bolt 'message' event handler when a human posts a reply
     inside a ticket's Slack thread. Creates a TicketReply with slack_ts set
@@ -286,7 +286,7 @@ async def handle_slack_thread_message(
             )
             return
 
-        # Match Slack user → SimplyTickets user (tech/admin only)
+        # Match Slack user → SimpleTickets user (tech/admin only)
         author_id: Optional[int] = None
         author_name_fallback = "Slack user"
 

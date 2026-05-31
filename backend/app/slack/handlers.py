@@ -66,7 +66,7 @@ def register_handlers(app: Any) -> None:
         Convert a channel message to a ticket when a technician/admin reacts
         with the configured trigger emoji.
 
-        The REACTOR must exist in SimplyTickets as a tech or admin (matched via
+        The REACTOR must exist in SimpleTickets as a tech or admin (matched via
         slack_user_id). Any Slack user can be the original message author.
         """
         emoji = event.get("reaction", "")
@@ -87,7 +87,7 @@ def register_handlers(app: Any) -> None:
 
         if reactor is None:
             logger.debug(
-                "reaction_added: ignoring — reactor %s is not a SimplyTickets tech/admin",
+                "reaction_added: ignoring — reactor %s is not a SimpleTickets tech/admin",
                 reactor_slack_id,
             )
             return

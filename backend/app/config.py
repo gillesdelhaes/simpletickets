@@ -11,6 +11,7 @@ Phase 2 — `settings_manager` (SettingsManager, reads from app_settings DB tabl
   Must be warmed in FastAPI lifespan before serving requests.
 """
 import logging
+import secrets
 import time
 from typing import Optional
 
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
 
     # These two are never overridden from the DB
     app_secret_key: str = "dev-secret-change-in-production"
-    database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/simplytickets"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/simpletickets"
 
     # All other fields serve as defaults when the DB has no value
     slack_bot_token: str = ""
@@ -104,6 +105,21 @@ class SettingsManager:
         if v is not None:
             return v.lower() not in ("false", "0", "no")
         return settings.slack_two_way_sync
+
+    @property
+    def jwt_secret(self) -> str:
+        return self._cache.get("jwt_secret") or settings.app_secret_key
+
+    async def ensure_jwt_secret(self, session) -> None:
+        """Generate and persist a strong JWT secret on first boot if not already set."""
+        if self._cache.get("jwt_secret"):
+            return
+        from app.services.settings_service import set_setting
+        new_secret = secrets.token_hex(32)
+        await set_setting("jwt_secret", new_secret, session)
+        await session.commit()
+        self._cache["jwt_secret"] = new_secret
+        logger.info("Generated new JWT secret and persisted to DB")
 
     def is_slack_configured(self) -> bool:
         return bool(self.slack_bot_token and self.slack_app_token)

@@ -1,4 +1,4 @@
-# SimplyTickets
+# SimpleTickets
 
 A self-hosted, Slack-first support ticketing system for small IT teams. End users submit and track tickets entirely through Slack — no portal account required. Technicians and admins work through a web UI.
 
@@ -30,8 +30,8 @@ A self-hosted, Slack-first support ticketing system for small IT teams. End user
 ## Quick Start
 
 ```bash
-git clone https://github.com/gillesdelhaes/simplytickets.git
-cd simplytickets
+git clone https://github.com/gillesdelhaes/SimpleTickets.git
+cd simpletickets
 docker compose up -d
 ```
 
@@ -53,7 +53,7 @@ All Slack credentials (bot token, app token, signing secret, trigger emoji) are 
 
 ## Slack Setup
 
-SimplyTickets uses a **private Slack app** installed in your workspace. A step-by-step guide covering all required scopes, events, and settings is available inside the app at **Admin → Slack Setup** once you've completed the setup wizard.
+SimpleTickets uses a **private Slack app** installed in your workspace. A step-by-step guide covering all required scopes, events, and settings is available inside the app at **Admin → Slack Setup** once you've completed the setup wizard.
 
 Short version:
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) — From scratch
@@ -73,7 +73,7 @@ Browser ──▶ Vite / nginx (3000) ──▶ FastAPI (8000) ──▶ Postgre
                                     WebSocket, no inbound port
 ```
 
-All services run on an internal Docker bridge network (`simplytickets_internal`). Only the frontend port is exposed to the host.
+All services run on an internal Docker bridge network (`simpletickets_internal`). Only the frontend port is exposed to the host.
 
 ## License
 

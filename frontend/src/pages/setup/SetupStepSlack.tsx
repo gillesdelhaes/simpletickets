@@ -58,7 +58,7 @@ export default function SetupStepSlack({ onNext }: Props) {
           Connect Slack
         </h2>
         <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
-          SimplyTickets uses a private Slack app installed in your workspace. You'll need to create one at{' '}
+          SimpleTickets uses a private Slack app installed in your workspace. You'll need to create one at{' '}
           <span style={{ color: '#FF4713', fontFamily: 'monospace', fontSize: 12 }}>api.slack.com/apps</span>{' '}
           before continuing.
         </p>
