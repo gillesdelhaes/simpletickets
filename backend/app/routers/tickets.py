@@ -20,6 +20,9 @@ from app.models.enums import Priority, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketListResponse, TicketRead, TicketUpdate
 from app.services.sla import apply_sla_status_change
 
+# Fields worth surfacing in the timeline
+_HISTORY_DISPLAY_FIELDS = {"status", "assignee_id", "priority", "category_id"}
+
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -421,3 +424,79 @@ async def update_ticket(
             pass
 
     return enriched
+
+
+# ── GET /tickets/{id}/history ──────────────────────────────────────────────────
+
+
+@router.get("/{ticket_id}/history")
+async def get_ticket_history(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Return timeline events for a ticket (status/priority/assignee/category changes)."""
+    await _get_ticket_or_404(session, ticket_id)
+
+    Actor = aliased(User, flat=True)
+
+    rows = (
+        await session.execute(
+            select(TicketHistory, Actor.name.label("actor_name"))
+            .outerjoin(Actor, TicketHistory.actor_id == Actor.id)
+            .where(
+                TicketHistory.ticket_id == ticket_id,
+                TicketHistory.field_changed.in_(_HISTORY_DISPLAY_FIELDS),
+            )
+            .order_by(TicketHistory.created_at.asc())
+        )
+    ).all()
+
+    # Build lookup tables to resolve IDs → names for assignee and category fields
+    user_ids = set()
+    category_ids = set()
+    for row in rows:
+        h: TicketHistory = row[0]
+        if h.field_changed == "assignee_id":
+            for val in (h.old_value, h.new_value):
+                if val and val.isdigit():
+                    user_ids.add(int(val))
+        elif h.field_changed == "category_id":
+            for val in (h.old_value, h.new_value):
+                if val and val.isdigit():
+                    category_ids.add(int(val))
+
+    user_names: dict[int, str] = {}
+    if user_ids:
+        user_rows = (await session.execute(
+            select(User.id, User.name).where(User.id.in_(user_ids))
+        )).all()
+        user_names = {r.id: r.name for r in user_rows}
+
+    cat_names: dict[int, str] = {}
+    if category_ids:
+        cat_rows = (await session.execute(
+            select(Category.id, Category.name).where(Category.id.in_(category_ids))
+        )).all()
+        cat_names = {r.id: r.name for r in cat_rows}
+
+    def _resolve(field: str, val: str | None) -> str | None:
+        if val is None:
+            return None
+        if field == "assignee_id" and val.isdigit():
+            return user_names.get(int(val), val)
+        if field == "category_id" and val.isdigit():
+            return cat_names.get(int(val), val)
+        return val
+
+    return [
+        {
+            "id": row[0].id,
+            "field": row[0].field_changed,
+            "old_value": _resolve(row[0].field_changed, row[0].old_value),
+            "new_value": _resolve(row[0].field_changed, row[0].new_value),
+            "actor_name": row[1],
+            "created_at": row[0].created_at.isoformat(),
+        }
+        for row in rows
+    ]
