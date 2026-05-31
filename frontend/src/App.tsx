@@ -13,20 +13,8 @@ import AdminSettings from './pages/admin/Settings'
 import AdminAudit from './pages/admin/Audit'
 import SlackSetup from './pages/admin/SlackSetup'
 import Search from './pages/Search'
+import Reports from './pages/Reports'
 import SetupWizard from './pages/setup/SetupWizard'
-
-function Placeholder({ name }: { name: string }) {
-  return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
-      <div className="text-center">
-        <p className="font-mono text-xs text-brand-primary tracking-widest uppercase mb-3">
-          Coming soon
-        </p>
-        <h1 className="text-2xl font-bold text-neutral-950">{name}</h1>
-      </div>
-    </div>
-  )
-}
 
 export default function App() {
   return (
@@ -43,7 +31,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/queue" element={<Queue />} />
             <Route path="/search" element={<Search />} />
-            <Route path="/reports" element={<Placeholder name="Reports" />} />
+            <Route path="/reports" element={<Reports />} />
           </Route>
 
           {/* ── Admin only ── */}

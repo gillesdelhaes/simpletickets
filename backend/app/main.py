@@ -16,6 +16,7 @@ from app.routers import (
     history,
     notifications,
     replies,
+    reports,
     search,
     sla,
     sla_policies,
@@ -74,3 +75,4 @@ app.include_router(sla.router,             prefix="/api")
 app.include_router(history.router,         prefix="/api")
 app.include_router(notifications.router,   prefix="/api")
 app.include_router(app_config.router,      prefix="/api")
+app.include_router(reports.router,         prefix="/api")
