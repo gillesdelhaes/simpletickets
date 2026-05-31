@@ -127,19 +127,13 @@ async def _build_ticket_modal() -> dict:
 
     blocks.append(
         {
-            "type": "input",
-            "block_id": "attachments_block",
-            "optional": True,
-            "label": {"type": "plain_text", "text": "Attachments (optional)"},
-            "hint": {
-                "type": "plain_text",
-                "text": "Images, PDFs, Word, Excel, CSV — max 10 MB each",
-            },
-            "element": {
-                "type": "file_input",
-                "action_id": "attachments_input",
-                "max_files": 5,
-            },
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "📎 Need to attach files? Reply with them in the confirmation DM after submitting.",
+                }
+            ],
         }
     )
 
@@ -476,15 +470,6 @@ def register_handlers(app: Any) -> None:
             selected = state_values["category_block"]["category_select"].get("selected_option") or {}
             category_value = int(selected["value"]) if selected.get("value") else None
 
-        # Collect uploaded file objects from the attachments block (may be absent or empty)
-        submitted_files: list[dict] = []
-        if "attachments_block" in state_values:
-            submitted_files = (
-                state_values["attachments_block"]
-                .get("attachments_input", {})
-                .get("files", [])
-            ) or []
-
         slack_user_id: str = body.get("user", {}).get("id", "")
 
         # Fetch display name (no email lookup — end users are Slack-only)
@@ -539,13 +524,6 @@ def register_handlers(app: Any) -> None:
                             await session.commit()
             except Exception:  # noqa: BLE001
                 logger.exception("ticket_modal: failed to DM user %s", slack_user_id)
-
-        # Download any files uploaded in the modal and attach them to the ticket
-        if submitted_files:
-            try:
-                await _download_slack_files(ticket.id, None, submitted_files)
-            except Exception:  # noqa: BLE001
-                logger.warning("ticket_modal: failed to download attachments for ticket %s", ticket.display_id)
 
         # Refresh App Home so the new ticket appears immediately
         if slack_user_id:
