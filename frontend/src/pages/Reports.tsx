@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell,
+  ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts'
 import AppShell from '../components/layout/AppShell'
 import api from '../lib/api'
@@ -21,6 +21,7 @@ interface VolumePoint { date: string; count: number }
 interface ByPriority { priority: string; count: number }
 interface ByStatus { status: string; count: number }
 interface ByCategory { category: string; count: number }
+interface BySource { source: string; count: number }
 interface TechRow {
   name: string
   total: number
@@ -47,6 +48,11 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const CATEGORY_COLOR = '#AD1164'
+
+const SOURCE_COLORS: Record<string, string> = {
+  slack: '#10B981',
+  web:   '#3B82F6',
+}
 
 // ── Date range helpers ─────────────────────────────────────────────────────────
 
@@ -160,6 +166,7 @@ export default function Reports() {
   const byPriority = useReport<ByPriority[]>('by-priority', params)
   const byStatus   = useReport<ByStatus[]>('by-status', params)
   const byCategory = useReport<ByCategory[]>('by-category', params)
+  const bySource   = useReport<BySource[]>('by-source', params)
   const techs      = useReport<TechRow[]>('technicians', params)
 
   const ov = overview.data
@@ -288,8 +295,8 @@ export default function Reports() {
         </Section>
       </div>
 
-      {/* ── By category ── */}
-      <div style={{ marginBottom: 24 }}>
+      {/* ── By category + By source ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, marginBottom: 24 }}>
         <Section title="By category">
           {byCategory.isLoading ? <Skeleton height={180} /> : (
             <ResponsiveContainer width="100%" height={Math.max(180, (byCategory.data?.length ?? 1) * 36)}>
@@ -308,6 +315,46 @@ export default function Reports() {
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />
                 <Bar dataKey="count" fill={CATEGORY_COLOR} radius={[0,4,4,0]} />
               </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Section>
+
+        <Section title="By channel">
+          {bySource.isLoading ? <Skeleton height={180} /> : (
+            <ResponsiveContainer width="100%" height={180}>
+              <PieChart>
+                <Pie
+                  data={bySource.data ?? []}
+                  dataKey="count"
+                  nameKey="source"
+                  cx="50%"
+                  cy="45%"
+                  innerRadius={48}
+                  outerRadius={72}
+                  paddingAngle={3}
+                >
+                  {(bySource.data ?? []).map(entry => (
+                    <Cell key={entry.source} fill={SOURCE_COLORS[entry.source] ?? '#E5E5E5'} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const p = payload[0]
+                    return (
+                      <div style={{ background: '#0A0A0A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>
+                        <div style={{ color: 'rgba(255,255,255,0.5)', marginBottom: 2, textTransform: 'capitalize' }}>{p.name}</div>
+                        <div style={{ color: p.payload.fill ?? '#fff', fontWeight: 600 }}>{p.value} tickets</div>
+                      </div>
+                    )
+                  }}
+                />
+                <Legend
+                  formatter={(value) => (
+                    <span style={{ fontSize: 12, color: '#737373', textTransform: 'capitalize' }}>{value}</span>
+                  )}
+                />
+              </PieChart>
             </ResponsiveContainer>
           )}
         </Section>

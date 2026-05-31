@@ -170,6 +170,25 @@ async def get_by_category(
     return [{"category": row.category, "count": row.count} for row in result.all()]
 
 
+# ── GET /api/reports/by-source ────────────────────────────────────────────────
+
+@router.get("/by-source")
+async def get_by_source(
+    from_date: Optional[date] = Query(default=None),
+    to_date: Optional[date] = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    start, end = _date_range(from_date, to_date)
+    result = await session.execute(
+        select(Ticket.source, func.count().label("count"))
+        .where(Ticket.created_at >= start, Ticket.created_at <= end)
+        .group_by(Ticket.source)
+        .order_by(func.count().desc())
+    )
+    return [{"source": row.source, "count": row.count} for row in result.all()]
+
+
 # ── GET /api/reports/technicians ──────────────────────────────────────────────
 
 @router.get("/technicians")
