@@ -183,7 +183,8 @@ async def notify_reporter_dm(ticket: Ticket, slack_user_id: str) -> None:
 
 async def post_reply_to_slack(ticket: Ticket, reply_body: str, author_name: str) -> Optional[str]:
     """
-    Post a web portal reply to the originating Slack thread.
+    Post a web portal reply to the originating Slack thread, then DM the
+    submitter at the top level so they get an unread notification.
 
     Returns the Slack message ts if successful (used to set reply.slack_ts for
     deduplication), or None if Slack is not configured / sync is disabled.
@@ -198,23 +199,40 @@ async def post_reply_to_slack(ticket: Ticket, reply_body: str, author_name: str)
     if client is None:
         return None
 
+    ts: Optional[str] = None
     try:
         result = await client.chat_postMessage(
             channel=ticket.slack_channel_id,
             thread_ts=ticket.slack_message_ts,
             text=f"*{author_name}:* {reply_body}",
         )
-        ts: Optional[str] = result.get("ts")
+        ts = result.get("ts")
         logger.debug(
             "Synced web reply to Slack thread %s (ticket %s, ts=%s)",
             ticket.slack_message_ts, ticket.display_id, ts,
         )
-        return ts
     except Exception:  # noqa: BLE001
         logger.exception(
             "Failed to post reply to Slack thread for ticket %s", ticket.display_id
         )
-        return None
+
+    # Top-level DM so the submitter sees an unread notification
+    if ticket.slack_submitter_id:
+        try:
+            await client.chat_postMessage(
+                channel=ticket.slack_submitter_id,
+                text=(
+                    f"💬 *New reply on {ticket.display_id}*\n"
+                    f"*{author_name}:* {reply_body}\n"
+                    f"_Open your support thread above to reply._"
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to send reply notification DM for ticket %s", ticket.display_id
+            )
+
+    return ts
 
 
 async def post_ticket_update_to_slack(
@@ -282,6 +300,18 @@ async def post_ticket_update_to_slack(
         logger.exception(
             "Failed to post field update to Slack for ticket %s", ticket.display_id
         )
+
+    # Top-level DM so the submitter sees an unread notification
+    if ticket.slack_submitter_id:
+        try:
+            await client.chat_postMessage(
+                channel=ticket.slack_submitter_id,
+                text=text,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to send update notification DM for ticket %s", ticket.display_id
+            )
 
 
 # ── Slack → Web sync ───────────────────────────────────────────────────────────
