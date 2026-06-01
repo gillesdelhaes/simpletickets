@@ -429,54 +429,128 @@ _HOME_PRIORITY_EMOJI: dict[str, str] = {
     "critical": "🔴",
 }
 
-async def build_home_view(slack_user_id: str, client: Any) -> dict:
+
+def _time_ago_home(dt: datetime) -> str:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    secs = max(0, int((now - dt).total_seconds()))
+    if secs < 60:
+        return "just now"
+    mins = secs // 60
+    if mins < 60:
+        return f"{mins}m ago"
+    hours = mins // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
+def _format_sla_home(ticket: "Ticket") -> str | None:
+    if not ticket.sla_deadline:
+        return None
+    if ticket.sla_breached:
+        return "🚨 SLA breached"
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    remaining = (ticket.sla_deadline - now).total_seconds()
+    if remaining <= 0:
+        return "🚨 SLA breached"
+    if remaining < 3600:
+        return f"⏱ SLA: {int(remaining // 60)}m left"
+    if remaining < 86400:
+        h, m = int(remaining // 3600), int((remaining % 3600) // 60)
+        return f"⏱ SLA: {h}h {m}m left"
+    return f"⏱ SLA: {int(remaining // 86400)}d left"
+
+
+async def build_home_view(slack_user_id: str, client: Any, tab: str = "active") -> dict:
     """
     Build the Block Kit view for a user's App Home tab.
-    Shows their open tickets with a button to jump to each Slack thread.
-    """
-    async with AsyncSessionLocal() as session:
-        # Non-resolved statuses — tickets still active for this user
-        open_result = await session.execute(
-            select(TicketStatusConfig.name).where(
-                TicketStatusConfig.is_resolved_state == False,  # noqa: E712
-                TicketStatusConfig.is_archived == False,  # noqa: E712
-            )
-        )
-        open_status_names = [row[0] for row in open_result.all()] or ["open", "in_progress", "pending_user"]
 
+    Tabs:
+    - active:   open + in-progress (non-resolved, non-paused)
+    - pending:  tickets paused waiting on user
+    - resolved: resolved / closed tickets
+    """
+    import json
+
+    async with AsyncSessionLocal() as session:
+        status_result = await session.execute(select(TicketStatusConfig))
+        all_statuses = status_result.scalars().all()
+
+    active_names = [s.name for s in all_statuses if not s.is_resolved_state and not s.pauses_sla and not s.is_archived] or ["open", "in_progress"]
+    pending_names = [s.name for s in all_statuses if s.pauses_sla and not s.is_archived] or ["pending_user"]
+    resolved_names = [s.name for s in all_statuses if s.is_resolved_state and not s.is_archived] or ["resolved", "closed"]
+
+    if tab == "pending":
+        status_filter = pending_names
+    elif tab == "resolved":
+        status_filter = resolved_names
+    else:
+        status_filter = active_names
+        tab = "active"
+
+    async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Ticket)
             .where(
                 Ticket.slack_submitter_id == slack_user_id,
-                Ticket.status.in_(open_status_names),
+                Ticket.status.in_(status_filter),
             )
             .order_by(Ticket.created_at.desc())
-            .limit(20)
+            .limit(10)
         )
         tickets = result.scalars().all()
+
+    # ── Tab strip ──────────────────────────────────────────────────────────────
+
+    def _tab_btn(label: str, tab_id: str) -> dict:
+        btn: dict = {
+            "type": "button",
+            "text": {"type": "plain_text", "text": label, "emoji": True},
+            "action_id": f"home_tab_{tab_id}",
+            "value": tab_id,
+        }
+        if tab_id == tab:
+            btn["style"] = "primary"
+        return btn
 
     blocks: list[dict] = [
         {
             "type": "header",
             "text": {"type": "plain_text", "text": "📋  My Support Tickets", "emoji": True},
         },
+        {
+            "type": "actions",
+            "elements": [
+                _tab_btn("🔥 Active", "active"),
+                _tab_btn("⏳ Pending", "pending"),
+                _tab_btn("✅ Resolved", "resolved"),
+            ],
+        },
         {"type": "divider"},
     ]
 
+    # ── Ticket cards ───────────────────────────────────────────────────────────
+
     if not tickets:
+        empty = {
+            "active":   "_No active tickets right now — all clear!_ 🎉",
+            "pending":  "_No tickets waiting on your response._",
+            "resolved": "_No resolved tickets yet._",
+        }
         blocks.append({
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": "_You have no open tickets right now._\n\nUse the button below to submit a new request.",
-            },
+            "text": {"type": "mrkdwn", "text": empty.get(tab, "_No tickets found._")},
         })
     else:
         for ticket in tickets:
-            status_emoji = _HOME_STATUS_EMOJI.get(ticket.status.value, "•")
-            priority_emoji = _HOME_PRIORITY_EMOJI.get(ticket.priority.value, "•")
+            status_str = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
+            priority_str = ticket.priority.value if hasattr(ticket.priority, "value") else str(ticket.priority)
+            status_emoji = _HOME_STATUS_EMOJI.get(status_str, "•")
+            priority_emoji = _HOME_PRIORITY_EMOJI.get(priority_str, "•")
+            status_label = status_str.replace("_", " ").title()
 
-            # Try to get a permalink to the Slack thread
+            # View thread permalink button (accessory)
             view_button: dict | None = None
             if ticket.slack_channel_id and ticket.slack_message_ts:
                 try:
@@ -488,45 +562,85 @@ async def build_home_view(slack_user_id: str, client: Any) -> dict:
                     if permalink:
                         view_button = {
                             "type": "button",
-                            "text": {"type": "plain_text", "text": "View thread", "emoji": False},
+                            "text": {"type": "plain_text", "text": "View thread ↗", "emoji": False},
                             "url": permalink,
                             "action_id": f"view_thread_{ticket.id}",
                         }
                 except Exception:  # noqa: BLE001
                     pass
 
+            # Main section
             section: dict = {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"*{ticket.display_id}* · {status_emoji} {ticket.status.value.replace('_', ' ').title()}"
-                        f"  {priority_emoji} {ticket.priority.value.capitalize()}\n"
-                        f"{ticket.title}"
+                        f"{status_emoji} *{status_label}*  ·  {priority_emoji} {priority_str.capitalize()}\n"
+                        f"*{ticket.display_id}* — {ticket.title}"
                     ),
                 },
             }
             if view_button:
                 section["accessory"] = view_button
-
             blocks.append(section)
+
+            # Context: age + SLA
+            context_parts = [f"📅 Opened {_time_ago_home(ticket.created_at)}"]
+            sla_text = _format_sla_home(ticket)
+            if sla_text:
+                context_parts.append(sla_text)
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "  ·  ".join(context_parts)}],
+            })
+
+            # Action buttons (not for resolved tab)
+            if tab != "resolved":
+                meta = json.dumps({"tid": ticket.id, "tab": tab})
+                blocks.append({
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "💬 Reply", "emoji": True},
+                            "action_id": f"home_reply_{ticket.id}",
+                            "value": meta,
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "✓ Resolve", "emoji": True},
+                            "action_id": f"home_resolve_{ticket.id}",
+                            "value": meta,
+                            "confirm": {
+                                "title": {"type": "plain_text", "text": "Resolve ticket?"},
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"Mark *{ticket.display_id}* as resolved?",
+                                },
+                                "confirm": {"type": "plain_text", "text": "Yes, resolve"},
+                                "deny": {"type": "plain_text", "text": "Cancel"},
+                            },
+                        },
+                    ],
+                })
+
             blocks.append({"type": "divider"})
 
-    blocks += [
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "➕  Submit a new ticket", "emoji": True},
-                    "style": "primary",
-                    "action_id": "open_ticket_modal",
-                }
-            ],
-        }
-    ]
+    # ── Footer ─────────────────────────────────────────────────────────────────
 
-    return {"type": "home", "blocks": blocks}
+    blocks.append({
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "➕  Submit a new ticket", "emoji": True},
+                "style": "primary",
+                "action_id": "open_ticket_modal",
+            }
+        ],
+    })
+
+    return {"type": "home", "blocks": blocks, "private_metadata": tab}
 
 
 # ── Slack file helpers ─────────────────────────────────────────────────────────

@@ -10,7 +10,10 @@ Interaction model:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -18,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings_manager
 from app.database import AsyncSessionLocal
-from app.models import Category, Ticket
+from app.models import Category, Ticket, TicketHistory, TicketReply, User
 from app.models.enums import Priority
 from app.models.ticket_status_config import TicketStatusConfig
 from app.slack.service import (
@@ -27,6 +30,8 @@ from app.slack.service import (
     create_ticket_from_slack,
     get_user_by_slack_id,
     handle_slack_thread_message,
+    post_reply_to_slack,
+    post_ticket_update_to_slack,
 )
 
 logger = logging.getLogger(__name__)
@@ -420,13 +425,20 @@ def register_handlers(app: Any) -> None:
 
     @app.event("app_home_opened")
     async def handle_app_home_opened(event: dict, client: Any) -> None:
-        """Render the App Home tab with the user's open tickets."""
+        """Render the App Home tab with the user's tickets."""
         slack_user_id: str = event.get("user", "")
         tab: str = event.get("tab", "")
         if tab != "home" or not slack_user_id:
             return
+        # Preserve the tab the user was on (stored in current view's private_metadata)
+        current_tab = "active"
         try:
-            view = await build_home_view(slack_user_id, client)
+            current_view = event.get("view") or {}
+            current_tab = current_view.get("private_metadata", "active") or "active"
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            view = await build_home_view(slack_user_id, client, tab=current_tab)
             await client.views_publish(user_id=slack_user_id, view=view)
         except Exception:  # noqa: BLE001
             logger.exception("app_home_opened: failed to publish home for %s", slack_user_id)
@@ -535,7 +547,220 @@ def register_handlers(app: Any) -> None:
         # Refresh App Home so the new ticket appears immediately
         if slack_user_id:
             try:
-                home_view = await build_home_view(slack_user_id, client)
+                home_view = await build_home_view(slack_user_id, client, tab="active")
                 await client.views_publish(user_id=slack_user_id, view=home_view)
             except Exception:  # noqa: BLE001
                 pass  # non-critical
+
+    # ── App Home: tab switch ───────────────────────────────────────────────────
+
+    @app.action(re.compile(r"^home_tab_"))
+    async def handle_home_tab(ack: Any, body: dict, client: Any) -> None:
+        await ack()
+        slack_user_id: str = body.get("user", {}).get("id", "")
+        tab: str = body.get("actions", [{}])[0].get("value", "active")
+        if not slack_user_id:
+            return
+        try:
+            view = await build_home_view(slack_user_id, client, tab=tab)
+            await client.views_publish(user_id=slack_user_id, view=view)
+        except Exception:  # noqa: BLE001
+            logger.exception("home_tab: failed to refresh home for %s", slack_user_id)
+
+    # ── App Home: open reply modal ─────────────────────────────────────────────
+
+    @app.action(re.compile(r"^home_reply_\d+$"))
+    async def handle_home_reply_button(ack: Any, body: dict, client: Any) -> None:
+        await ack()
+        raw = body.get("actions", [{}])[0].get("value", "{}")
+        try:
+            meta = json.loads(raw)
+            ticket_id: int = int(meta["tid"])
+            tab: str = meta.get("tab", "active")
+        except Exception:  # noqa: BLE001
+            return
+
+        async with AsyncSessionLocal() as session:
+            ticket = await session.get(Ticket, ticket_id)
+        if not ticket:
+            return
+
+        modal: dict = {
+            "type": "modal",
+            "callback_id": "home_reply_modal",
+            "private_metadata": json.dumps({"tid": ticket_id, "tab": tab}),
+            "title": {"type": "plain_text", "text": f"Reply — {ticket.display_id}"},
+            "submit": {"type": "plain_text", "text": "Send reply"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*{ticket.title}*\nYour reply will be added to the ticket and posted in the support thread.",
+                    },
+                },
+                {
+                    "type": "input",
+                    "block_id": "reply_block",
+                    "element": {
+                        "type": "plain_text_input",
+                        "action_id": "reply_input",
+                        "multiline": True,
+                        "placeholder": {"type": "plain_text", "text": "Type your reply…"},
+                    },
+                    "label": {"type": "plain_text", "text": "Message"},
+                },
+            ],
+        }
+        try:
+            await client.views_open(trigger_id=body["trigger_id"], view=modal)
+        except Exception:  # noqa: BLE001
+            logger.exception("home_reply: failed to open modal for ticket %d", ticket_id)
+
+    # ── App Home: reply modal submission ──────────────────────────────────────
+
+    @app.view("home_reply_modal")
+    async def handle_home_reply_modal(ack: Any, body: dict, client: Any, view: dict) -> None:
+        await ack()
+        slack_user_id: str = body.get("user", {}).get("id", "")
+        try:
+            meta = json.loads(view.get("private_metadata", "{}"))
+            ticket_id = int(meta["tid"])
+            tab = meta.get("tab", "active")
+        except Exception:  # noqa: BLE001
+            return
+
+        reply_text: str = (
+            view["state"]["values"]["reply_block"]["reply_input"].get("value") or ""
+        ).strip()
+        if not reply_text:
+            return
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        try:
+            async with AsyncSessionLocal() as session:
+                ticket = await session.get(Ticket, ticket_id)
+                if not ticket:
+                    return
+
+                # Resolve author
+                author_id: int | None = None
+                author_name = await _slack_display_name(client, slack_user_id) if slack_user_id else "Slack user"
+                user_result = await session.execute(
+                    select(User).where(User.slack_user_id == slack_user_id)
+                )
+                db_user = user_result.scalar_one_or_none()
+                if db_user:
+                    author_id = db_user.id
+                    author_name = db_user.name or db_user.email
+
+                # Create reply in DB
+                slack_ts = await post_reply_to_slack(ticket, reply_text, author_name)
+                reply = TicketReply(
+                    ticket_id=ticket_id,
+                    author_id=author_id,
+                    body=reply_text,
+                    is_internal=False,
+                    slack_ts=slack_ts,
+                    slack_author_name=author_name if author_id is None else None,
+                    created_at=now,
+                )
+                session.add(reply)
+                await session.commit()
+                logger.info("Home reply added to ticket %s by %s", ticket.display_id, author_name)
+        except Exception:  # noqa: BLE001
+            logger.exception("home_reply_modal: failed to save reply for ticket %d", ticket_id)
+
+        # Refresh home
+        if slack_user_id:
+            try:
+                home_view = await build_home_view(slack_user_id, client, tab=tab)
+                await client.views_publish(user_id=slack_user_id, view=home_view)
+            except Exception:  # noqa: BLE001
+                pass
+
+    # ── App Home: resolve ticket ───────────────────────────────────────────────
+
+    @app.action(re.compile(r"^home_resolve_\d+$"))
+    async def handle_home_resolve(ack: Any, body: dict, client: Any) -> None:
+        await ack()
+        slack_user_id: str = body.get("user", {}).get("id", "")
+        raw = body.get("actions", [{}])[0].get("value", "{}")
+        try:
+            meta = json.loads(raw)
+            ticket_id = int(meta["tid"])
+            tab = meta.get("tab", "active")
+        except Exception:  # noqa: BLE001
+            return
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        try:
+            async with AsyncSessionLocal() as session:
+                ticket = await session.get(Ticket, ticket_id)
+                if not ticket:
+                    return
+
+                # Find the first resolved status
+                res_result = await session.execute(
+                    select(TicketStatusConfig)
+                    .where(
+                        TicketStatusConfig.is_resolved_state == True,  # noqa: E712
+                        TicketStatusConfig.is_archived == False,  # noqa: E712
+                    )
+                    .order_by(TicketStatusConfig.sort_order)
+                    .limit(1)
+                )
+                resolved_cfg = res_result.scalar_one_or_none()
+                resolved_status = resolved_cfg.name if resolved_cfg else "resolved"
+
+                old_status = ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
+                if old_status == resolved_status:
+                    return  # already resolved
+
+                actor_name = "User (Slack)"
+                user_result = await session.execute(
+                    select(User).where(User.slack_user_id == slack_user_id)
+                )
+                db_user = user_result.scalar_one_or_none()
+                if db_user:
+                    actor_name = db_user.name or db_user.email
+
+                # Apply SLA pause/resume logic
+                from app.services.sla import apply_sla_status_change
+                await apply_sla_status_change(ticket, resolved_status, session)
+
+                ticket.status = resolved_status
+                ticket.resolved_at = now
+                session.add(
+                    TicketHistory(
+                        ticket_id=ticket_id,
+                        actor_id=db_user.id if db_user else None,
+                        field_changed="status",
+                        old_value=old_status,
+                        new_value=resolved_status,
+                        created_at=now,
+                    )
+                )
+                await session.commit()
+
+                # Notify Slack thread
+                await post_ticket_update_to_slack(
+                    ticket,
+                    {"status": (old_status, resolved_status)},
+                    actor_name,
+                )
+                logger.info("Ticket %s resolved from App Home by %s", ticket.display_id, actor_name)
+
+        except Exception:  # noqa: BLE001
+            logger.exception("home_resolve: failed for ticket %d", ticket_id)
+
+        # Refresh home — go to resolved tab so user can see it
+        if slack_user_id:
+            try:
+                home_view = await build_home_view(slack_user_id, client, tab="resolved")
+                await client.views_publish(user_id=slack_user_id, view=home_view)
+            except Exception:  # noqa: BLE001
+                pass
