@@ -161,7 +161,7 @@ async def notify_assignee_dm(ticket: Ticket, assignee_slack_user_id: str, actor_
         await client.chat_postMessage(
             channel=assignee_slack_user_id,
             text=(
-                f"🎫 *You've been assigned a ticket*\n"
+                f"👤 *You've been assigned a ticket*\n"
                 f"*{ticket.display_id}* — {ticket.title}\n"
                 f"Priority: {emoji} {priority_str.capitalize()} · Assigned by {actor_name}"
             ),
