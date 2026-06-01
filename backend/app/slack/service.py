@@ -181,10 +181,18 @@ async def notify_reporter_dm(ticket: Ticket, slack_user_id: str) -> None:
         logger.exception("notify_reporter_dm: failed to DM user %s", slack_user_id)
 
 
-async def post_reply_to_slack(ticket: Ticket, reply_body: str, author_name: str) -> Optional[str]:
+async def post_reply_to_slack(
+    ticket: Ticket,
+    reply_body: str,
+    author_name: str,
+    notify_submitter: bool = True,
+) -> Optional[str]:
     """
     Post a web portal reply to the originating Slack thread, then DM the
     submitter at the top level so they get an unread notification.
+
+    Pass notify_submitter=False when the reply was authored by the submitter
+    themselves (e.g. via the App Home reply modal) to avoid a self-notification.
 
     Returns the Slack message ts if successful (used to set reply.slack_ts for
     deduplication), or None if Slack is not configured / sync is disabled.
@@ -217,7 +225,7 @@ async def post_reply_to_slack(ticket: Ticket, reply_body: str, author_name: str)
         )
 
     # Top-level DM so the submitter sees an unread notification
-    if ticket.slack_submitter_id:
+    if notify_submitter and ticket.slack_submitter_id:
         try:
             await client.chat_postMessage(
                 channel=ticket.slack_submitter_id,

@@ -656,8 +656,8 @@ def register_handlers(app: Any) -> None:
                     author_id = db_user.id
                     author_name = db_user.name or db_user.email
 
-                # Create reply in DB
-                slack_ts = await post_reply_to_slack(ticket, reply_text, author_name)
+                # Create reply in DB — no self-notification, the user sent this themselves
+                slack_ts = await post_reply_to_slack(ticket, reply_text, author_name, notify_submitter=False)
                 reply = TicketReply(
                     ticket_id=ticket_id,
                     author_id=author_id,
