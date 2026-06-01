@@ -6,6 +6,7 @@ import AuthImage from '../components/AuthImage'
 import SLABadge from '../components/tickets/SLABadge'
 import { useTicket } from '../hooks/useTicket'
 import { useReplies, useAddReply, type ReplyRead } from '../hooks/useReplies'
+import { useTicketHistory, type HistoryEvent } from '../hooks/useTicketHistory'
 import { useAttachments, type AttachmentRead, isImage, formatBytes } from '../hooks/useAttachments'
 import { useCategories } from '../hooks/useCategories'
 import { useAgents } from '../hooks/useAgents'
@@ -799,6 +800,66 @@ function MetaSidebar({ ticket, isAdmin, currentUserId }: MetaSidebarProps) {
   )
 }
 
+// ── History event row ──────────────────────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = {
+  status: 'status',
+  priority: 'priority',
+  assignee_id: 'assignee',
+  category_id: 'category',
+}
+
+const STATUS_DISPLAY: Record<string, string> = {
+  open: 'Open', in_progress: 'In Progress', pending_user: 'Pending',
+  resolved: 'Resolved', closed: 'Closed',
+}
+
+const STATUS_CHIP_COLORS: Record<string, string> = {
+  open: '#3B82F6', in_progress: '#FF4713', pending_user: '#F59E0B',
+  resolved: '#10B981', closed: '#737373',
+}
+
+function formatHistoryValue(field: string, value: string | null): React.ReactNode {
+  if (value == null) return <em style={{ color: '#A3A3A3' }}>none</em>
+  if (field === 'status') {
+    const color = STATUS_CHIP_COLORS[value] ?? '#737373'
+    return (
+      <span style={{
+        display: 'inline-block', padding: '1px 7px', borderRadius: 999,
+        fontSize: 11, fontWeight: 600,
+        background: `${color}18`, color, border: `1px solid ${color}40`,
+      }}>
+        {STATUS_DISPLAY[value] ?? value}
+      </span>
+    )
+  }
+  return <strong style={{ color: '#262626' }}>{value}</strong>
+}
+
+function HistoryEventRow({ event }: { event: HistoryEvent }) {
+  const label = FIELD_LABELS[event.field] ?? event.field
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '4px 0', justifyContent: 'center',
+    }}>
+      <div style={{ flex: 1, height: 1, background: '#F2F2F2' }} />
+      <div style={{ fontSize: 11, color: '#A3A3A3', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}>
+        <span style={{ fontWeight: 500, color: '#737373' }}>{event.actor_name ?? 'System'}</span>
+        <span>changed {label}</span>
+        {event.old_value != null && (
+          <>{' '}from {formatHistoryValue(event.field, event.old_value)}</>
+        )}
+        <span>to</span>
+        {formatHistoryValue(event.field, event.new_value)}
+        <span style={{ color: '#C0C0C0' }}>·</span>
+        <span>{timeAgo(event.created_at)}</span>
+      </div>
+      <div style={{ flex: 1, height: 1, background: '#F2F2F2' }} />
+    </div>
+  )
+}
+
 // ── Thread column ──────────────────────────────────────────────────────────────
 
 interface ThreadColumnProps {
@@ -809,6 +870,7 @@ interface ThreadColumnProps {
 
 function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
   const { data: replies, isLoading } = useReplies(ticket.id)
+  const { data: historyEvents } = useTicketHistory(ticket.id)
   const { data: allAttachments } = useAttachments(ticket.id)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -826,6 +888,18 @@ function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
   const visibleReplies = isTech
     ? (replies ?? [])
     : (replies ?? []).filter(r => !r.is_internal)
+
+  // Merge replies and history events into a single chronological list
+  type TimelineItem =
+    | { kind: 'reply'; data: ReplyRead }
+    | { kind: 'event'; data: HistoryEvent }
+
+  const timeline: TimelineItem[] = [
+    ...visibleReplies.map(r => ({ kind: 'reply' as const, data: r })),
+    ...(historyEvents ?? []).map(e => ({ kind: 'event' as const, data: e })),
+  ].sort((a, b) =>
+    new Date(a.data.created_at).getTime() - new Date(b.data.created_at).getTime()
+  )
 
   const isClosed = ticket.status === 'resolved' || ticket.status === 'closed'
 
@@ -881,17 +955,21 @@ function ThreadColumn({ ticket, isTech, currentUserId }: ThreadColumnProps) {
             </div>
           ))}
         </div>
-      ) : visibleReplies.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '12px 0' }}>
-          {visibleReplies.map(reply => (
-            <ReplyBubble
-              key={reply.id}
-              reply={reply}
-              isOwn={reply.author_id === currentUserId}
-              isTech={isTech}
-              attachments={attachmentsByReply[String(reply.id)] ?? []}
-            />
-          ))}
+      ) : timeline.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 0' }}>
+          {timeline.map(item =>
+            item.kind === 'reply' ? (
+              <ReplyBubble
+                key={`r-${item.data.id}`}
+                reply={item.data}
+                isOwn={item.data.author_id === currentUserId}
+                isTech={isTech}
+                attachments={attachmentsByReply[String(item.data.id)] ?? []}
+              />
+            ) : (
+              <HistoryEventRow key={`h-${item.data.id}`} event={item.data} />
+            )
+          )}
           <div ref={bottomRef} />
         </div>
       ) : (
