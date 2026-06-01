@@ -250,6 +250,7 @@ async def post_ticket_update_to_slack(
     *,
     assignee_name: Optional[str] = None,
     category_name: Optional[str] = None,
+    notify_submitter: bool = True,
 ) -> None:
     """
     Post a single combined update message to the originating Slack thread
@@ -310,7 +311,7 @@ async def post_ticket_update_to_slack(
         )
 
     # Top-level DM so the submitter sees an unread notification
-    if ticket.slack_submitter_id:
+    if notify_submitter and ticket.slack_submitter_id:
         try:
             await client.chat_postMessage(
                 channel=ticket.slack_submitter_id,

@@ -746,11 +746,12 @@ def register_handlers(app: Any) -> None:
                 )
                 await session.commit()
 
-                # Notify Slack thread
+                # Notify Slack thread — no self-notification, user did this themselves
                 await post_ticket_update_to_slack(
                     ticket,
                     {"status": (old_status, resolved_status)},
                     actor_name,
+                    notify_submitter=False,
                 )
                 logger.info("Ticket %s resolved from App Home by %s", ticket.display_id, actor_name)
 
