@@ -10,14 +10,12 @@ from sqlalchemy.orm import aliased
 from app.auth.deps import get_current_user
 from app.database import get_session
 from app.models import Ticket, TicketHistory, TicketReply, User
-from app.models.enums import TicketStatus
+from app.models.ticket_status_config import TicketStatusConfig
 from app.schemas.reply import ReplyCreate, ReplyRead
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["replies"])
-
-_CLOSED_STATUSES = {TicketStatus.resolved, TicketStatus.closed}
 
 
 def _utcnow() -> datetime:
@@ -94,10 +92,36 @@ async def create_reply(
 
     is_internal = body.is_internal
 
-    # Public reply on a resolved/closed ticket → re-open to in_progress
+    # Resolved status names — used to decide whether to re-open the ticket
+    resolved_result = await session.execute(
+        select(TicketStatusConfig.name).where(
+            TicketStatusConfig.is_resolved_state == True  # noqa: E712
+        )
+    )
+    resolved_names = {row[0] for row in resolved_result.all()}
+
+    # Default fallback if the table is empty
+    if not resolved_names:
+        resolved_names = {"resolved", "closed"}
+
+    # Re-open status — first non-resolved, non-paused active status by sort order
+    reopen_result = await session.execute(
+        select(TicketStatusConfig.name)
+        .where(
+            TicketStatusConfig.is_resolved_state == False,  # noqa: E712
+            TicketStatusConfig.pauses_sla == False,  # noqa: E712
+            TicketStatusConfig.is_archived == False,  # noqa: E712
+        )
+        .order_by(TicketStatusConfig.sort_order)
+        .limit(1)
+    )
+    reopen_row = reopen_result.scalar_one_or_none()
+    reopen_status = reopen_row if reopen_row else "in_progress"
+
+    # Public reply on a resolved/closed ticket → re-open
     old_status = ticket.status
-    if ticket.status in _CLOSED_STATUSES and not is_internal:
-        ticket.status = TicketStatus.in_progress
+    if old_status in resolved_names and not is_internal:
+        ticket.status = reopen_status
         ticket.resolved_at = None
         ticket.updated_at = now
         session.add(
@@ -105,8 +129,8 @@ async def create_reply(
                 ticket_id=ticket.id,
                 actor_id=current_user.id,
                 field_changed="status",
-                old_value=old_status.value,
-                new_value=TicketStatus.in_progress.value,
+                old_value=old_status if isinstance(old_status, str) else old_status.value,
+                new_value=reopen_status,
                 created_at=now,
             )
         )
