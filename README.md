@@ -9,9 +9,10 @@ A self-hosted, Slack-first helpdesk for small IT teams. End users submit and tra
 ### Slack integration
 - **Four creation paths** — DM the bot, react with an emoji, use `/ticket`, or the App Home tab
 - **Two-way thread sync** — web replies post to the Slack thread automatically, and vice versa
-- **DM notifications** — when a technician creates a ticket on behalf of a Slack user, the bot DMs them a confirmation and threads all future updates back to them
+- **DM notifications** — submitter is notified on every tech reply and field update; assignee is DM'd when assigned a ticket
+- **SLA breach warnings** — all technicians and admins with a Slack account are DM'd 15 minutes before a resolution or first-response deadline
 - **File attachments** — images and files flow in both directions between Slack and the web UI
-- **App Home tab** — end users see all their open tickets and can submit new ones without leaving Slack
+- **App Home tab** — tabbed view (Active / Pending / Resolved) with rich ticket cards, inline Reply modal, and one-click Resolve; auto-refreshes after actions
 
 ### Web UI (technicians and admins only)
 - **Dashboard** — unassigned queue count, "needs your attention" panel (SLA breaches + unread replies on your tickets), live activity feed
@@ -21,16 +22,17 @@ A self-hosted, Slack-first helpdesk for small IT teams. End users submit and tra
 - **Full-text search** — across titles, descriptions, and reply bodies (PostgreSQL FTS)
 
 ### Core engine
-- **SLA policies** — configurable per priority; resolution and first-response deadlines; breach detection; pause/resume on `pending_user` status
+- **SLA policies** — configurable per priority; resolution and first-response deadlines; breach detection; pause/resume on configurable statuses; auto-reopen on reply
+- **Configurable statuses** — create custom statuses with colour, SLA-pause flag, and resolved-state flag; no code changes needed
 - **Conversation timeline** — status changes, reassignments, priority changes, and category changes appear inline between replies with actor and timestamp
 - **Audit log** — every field change recorded with actor, old value, and new value
-- **Notifications** — unread reply badges on queue rows, bell dropdown with per-ticket navigation
+- **Notifications** — unread reply badges on queue rows, bell dropdown with per-ticket navigation; queue and ticket views auto-refresh every 15–30 s
 
 ### Admin
 - **Users** — local accounts only (admin-created); Slack user ID linking for cross-platform identity
-- **Categories, SLA policies, settings** — all configurable from the web UI; no config files or restarts needed
+- **Unified settings** — single tabbed page covers general settings, Slack credentials, categories, SLA policies, statuses, and backup/restore; no config files or restarts needed
 - **Setup wizard** — first-run flow creates the admin account and optionally configures Slack credentials
-- **Slack setup guide** — step-by-step in-app guide covering all required scopes, events, and settings
+- **Slack setup guide** — step-by-step guide built into the Slack settings tab covering all required scopes, events, and app configuration
 
 ---
 
@@ -79,7 +81,7 @@ All Slack credentials (bot token, app token, signing secret, trigger emoji) are 
 
 SimpleTickets uses a **private Slack app** in your workspace running over Socket Mode — no public webhook URL or port forwarding needed.
 
-A full step-by-step guide is available inside the app at **Admin → Slack Setup** after completing the wizard. Short version:
+A full step-by-step guide is available inside the app at **Admin → Settings → Slack** after completing the wizard. Short version:
 
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) → From scratch
 2. Enable **Socket Mode** → generate an App-Level Token (`xapp-…`) with `connections:write`
